@@ -189,7 +189,7 @@ for (i in 1:length(sampleSize)) {
     )
     write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-    system2(command = "./main",
+    system2(command = "./BaySeq",
             args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
     result <- fromJSON("output_custom.json")
@@ -387,7 +387,7 @@ for (i in 1:length(sampleSize)) {
     )
     write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-    system2(command = "./main",
+    system2(command = "./BaySeq",
             args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
     result <- fromJSON("output_custom.json")
@@ -564,7 +564,7 @@ for (i in 1:length(earlyThreshold)) {
     )
     write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-    system2(command = "./main",
+    system2(command = "./BaySeq",
             args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
     result <- fromJSON("output_custom.json")
@@ -840,7 +840,7 @@ for (i in 1:nrow(index)) {
   )
   write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-  system2(command = "./main",
+  system2(command = "./BaySeq",
           args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
   result <- fromJSON("output_custom.json")
@@ -884,7 +884,7 @@ for (i in 1:nrow(index)) {
     )
     write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-    system2(command = "./main",
+    system2(command = "./BaySeq",
             args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
     result <- fromJSON("output_custom.json")
@@ -1027,7 +1027,7 @@ for (i in 1:length(postThreshold)) {
     )
     write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-    system2(command = "./main",
+    system2(command = "./BaySeq",
             args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
     result <- fromJSON("output_custom.json")
@@ -1303,7 +1303,7 @@ for (i in 1:nrow(index)) {
   )
   write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-  system2(command = "./main",
+  system2(command = "./BaySeq",
           args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
   result <- fromJSON("output_custom.json")
@@ -1347,7 +1347,7 @@ for (i in 1:nrow(index)) {
     )
     write_json(config, "config_custom.json", auto_unbox = TRUE, pretty = TRUE)
 
-    system2(command = "./main",
+    system2(command = "./BaySeq",
             args = c("-c", "config_custom.json", "-o", "output_custom.json"))
 
     result <- fromJSON("output_custom.json")
