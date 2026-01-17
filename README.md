@@ -1,1 +1,1 @@
-# BayesGSD
+# Bayesian Group Sequential Designs
