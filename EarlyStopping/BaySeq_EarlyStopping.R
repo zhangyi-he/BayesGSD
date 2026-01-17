@@ -1,9 +1,7 @@
-#' @title Shifting from overly aggressive to more conservative early stopping in Bayesian group sequential designs
+#' @title From aggressive to conservative early stopping in Bayesian group sequential designs
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 #' This R script implements the operating characteristics evaluation for the manuscript.
-
-setwd("~/Dropbox/Jeffery He/iResearch/Publications/2024/ZH2026-ClinTrial-StatAdv-BayesGSD-AlphaSpending/Code/Code v1.0")
 
 if (!require("jsonlite")) {
   install.packages("jsonlite")
