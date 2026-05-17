@@ -1,4 +1,4 @@
-# BayesGSD reproduction code
+# Rapid evaluation and calibration of Bayesian group sequential designs via conjugate-mixture semi-simulation
 
 R code that reproduces all numerical results, tables, and figures in the
 manuscript **"Rapid evaluation and calibration of Bayesian group sequential
