@@ -1,0 +1,453 @@
+#' @title Post-run manuscript-update helper
+#' @description Runs after the full re-run completes. Performs the
+#'   deterministic manuscript updates that can be done from the new caches:
+#'     (1) copies/renames the new figure files into the manuscript directory
+#'         under the fig341..fig344 / fig361 / figA11 / figA12 filenames the
+#'         .tex file references;
+#'     (2) replaces the \texttt{TBD} placeholders in the Monte Carlo
+#'         precision table (§3.6) and its discussion paragraphs with
+#'         mean / MC SE values computed from the new
+#'         ADRENAL_MonteCarloError.rda;
+#'     (3) writes Output/Output v1.0/post_run_summary.txt containing all the
+#'         numerical values needed to refresh the §3.3.1, §3.3.2, §3.4 and
+#'         §3.5 narrative claims (cross-method differences, speedup ratios,
+#'         wall-clock figures, type I climb, expected sample size shrinkage).
+#'   The summary file is consumed in a follow-up conversation turn for the
+#'   prose edits that are too sensitive to auto-rewrite by regex.
+#' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
+
+# Project root, parallelism, INLA threads, sessionInfo helper.
+# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+local({
+  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
+    cur <- getwd()
+    while (cur != dirname(cur)) {
+      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
+        bootstrap_root <- cur; break
+      }
+      cur <- dirname(cur)
+    }
+  }
+  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
+    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
+  }
+  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+})
+
+# Note: OUTPUT_DIR, MANUSCRIPT_DIR, SUPPLEMENT_DIR are provided by the setup
+# helper. TEX_PATH and SUMMARY_PATH are derived here for clarity.
+TEX_PATH          <- file.path(MANUSCRIPT_DIR, "ZH2023_Manuscript.tex")
+SUMMARY_PATH      <- file.path(OUTPUT_DIR, "post_run_summary.txt")
+
+# ----------------------------------------------------------------------------
+# (1) Figure copy/rename
+# ----------------------------------------------------------------------------
+
+# Per-figure: (src basename, dst basename, dst directory). Binding figures and
+# the prior-diagnostic figure go to the main manuscript directory; non-binding
+# variants are renamed into the Supplemental Material directory under figS11..S14.
+fig_map <- list(
+  list("ADRENAL_OperatingCharacteristics_type1Error_Binding.jpeg",      "fig341.jpeg",  MANUSCRIPT_DIR),
+  list("ADRENAL_OperatingCharacteristics_type2Error_Binding.jpeg",      "fig342.jpeg",  MANUSCRIPT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_Binding.jpeg", "fig343.jpeg",  MANUSCRIPT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_Binding.jpeg", "fig344.jpeg",  MANUSCRIPT_DIR),
+  list("ADRENAL_MonteCarloError.jpeg",                                  "fig361.jpeg",  MANUSCRIPT_DIR),
+  list("ADRENAL_PriorDiagnostics.jpeg",                                 "figA11.jpeg",   MANUSCRIPT_DIR),
+  list("ADRENAL_QuadratureConvergence.jpeg",                            "figA12.jpeg",   MANUSCRIPT_DIR),
+  # Supplement (non-binding versions of Figures 1-4 of §3.4)
+  list("ADRENAL_OperatingCharacteristics_type1Error_nonBinding.jpeg",      "figS11.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_type2Error_nonBinding.jpeg",      "figS12.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_nonBinding.jpeg", "figS13.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_nonBinding.jpeg", "figS14.jpeg", SUPPLEMENT_DIR)
+)
+cat("=== Figure copy/rename ===\n")
+for (entry in fig_map) {
+  src      <- entry[[1L]]
+  dst      <- entry[[2L]]
+  dst_dir  <- entry[[3L]]
+  src_path <- file.path(OUTPUT_DIR, src)
+  dst_path <- file.path(dst_dir,    dst)
+  if (file.exists(src_path)) {
+    if (!dir.exists(dst_dir)) dir.create(dst_dir, recursive = TRUE)
+    ok <- file.copy(src_path, dst_path, overwrite = TRUE)
+    cat(sprintf("  %s %s -> %s\n", if (ok) "OK" else "FAIL",
+                src, file.path(basename(dst_dir), dst)))
+  } else {
+    cat(sprintf("  MISSING %s\n", src_path))
+  }
+}
+
+# ----------------------------------------------------------------------------
+# (2) Monte Carlo precision table (§3.6) placeholder replacement + discussion TBDs
+# ----------------------------------------------------------------------------
+
+cat("\n=== Monte Carlo precision table placeholder replacement ===\n")
+mc_path <- file.path(OUTPUT_DIR, "ADRENAL_MonteCarloError.rda")
+if (!file.exists(mc_path)) {
+  cat("  MISSING ", mc_path, " - skipping table update\n")
+} else {
+  load(mc_path)
+  # numberOfAnalyses, R_GRID, R_LABELS, type1ErrorRate, type2ErrorRate
+
+  K_GRID <- numberOfAnalyses
+
+  fmt_pct <- function(x) sprintf("%.2f\\,\\%%", 100 * x)
+  fmt_pp  <- function(x) sprintf("%.2f\\,pp", 100 * x)
+
+  tex <- readLines(TEX_PATH, warn = FALSE)
+  R_label_to_replace <- "1,000,000"
+
+  for (i in seq_along(K_GRID)) {
+    K <- K_GRID[i]
+    rates_t1 <- type1ErrorRate[[R_label_to_replace]][i, ]
+    rates_t2 <- type2ErrorRate[[R_label_to_replace]][i, ]
+    t1_mean <- mean(rates_t1, na.rm = TRUE)
+    t1_se   <- sd(rates_t1, na.rm = TRUE)
+    t2_mean <- mean(rates_t2, na.rm = TRUE)
+    t2_se   <- sd(rates_t2, na.rm = TRUE)
+
+    old_line <- sprintf(
+      "    %d & 1{,}000{,}000 & \\texttt{TBD} & \\texttt{TBD} & \\texttt{TBD} & \\texttt{TBD} \\\\",
+      K
+    )
+    new_line <- sprintf(
+      "    %d & 1{,}000{,}000 & %s & %s & %s & %s \\\\",
+      K,
+      fmt_pct(t1_mean), fmt_pp(t1_se),
+      fmt_pct(t2_mean), fmt_pp(t2_se)
+    )
+    idx <- which(tex == old_line)
+    if (length(idx) == 1L) {
+      tex[idx] <- new_line
+      cat(sprintf("  K=%d row updated  (alpha=%.4f+-%.4f, beta=%.4f+-%.4f)\n",
+                  K, t1_mean, t1_se, t2_mean, t2_se))
+    } else {
+      cat(sprintf("  K=%d: %d matches found, expected 1; skipping\n", K, length(idx)))
+    }
+  }
+
+  # §3.6 discussion paragraph 1: replace "$0.06$ percentage points (at $K=9$)" type
+  # statement and its R=1,000,000 extension. Find the largest type I MC SE at
+  # R=1,000,000 across K and which K it falls at.
+  t1_se_by_K <- sapply(seq_along(K_GRID), function(i) sd(type1ErrorRate[["1,000,000"]][i, ], na.rm = TRUE))
+  argmax_K   <- K_GRID[which.max(t1_se_by_K)]
+  max_t1_se  <- max(t1_se_by_K)
+
+  old_t1 <- "and at $R=1{,}000{,}000$ it is \\texttt{TBD} percentage points (\\texttt{TBD})."
+  new_t1 <- sprintf("and at $R=1{,}000{,}000$ it is $%.2f$ percentage points (at $K=%d$).",
+                    100 * max_t1_se, argmax_K)
+  idx_t1 <- grep(old_t1, tex, fixed = TRUE)
+  if (length(idx_t1) == 1L) {
+    tex[idx_t1] <- sub(old_t1, new_t1, tex[idx_t1], fixed = TRUE)
+    cat(sprintf("  §3.6 type I MC SE bound updated: %.2f pp at K=%d\n", 100*max_t1_se, argmax_K))
+  } else {
+    cat(sprintf("  §3.6 type I MC SE bound: %d matches, expected 1; skipping\n", length(idx_t1)))
+  }
+
+  # §3.6 discussion paragraph 2: replace "between TBD and TBD percentage points
+  # at R=1,000,000" with the actual range.
+  t2_se_by_K <- sapply(seq_along(K_GRID), function(i) sd(type2ErrorRate[["1,000,000"]][i, ], na.rm = TRUE))
+
+  old_t2 <- "further to between \\texttt{TBD} and \\texttt{TBD} percentage points at $R=1{,}000{,}000$."
+  new_t2 <- sprintf("further to between $%.2f$ and $%.2f$ percentage points at $R=1{,}000{,}000$.",
+                    100 * min(t2_se_by_K), 100 * max(t2_se_by_K))
+  idx_t2 <- grep(old_t2, tex, fixed = TRUE)
+  if (length(idx_t2) == 1L) {
+    tex[idx_t2] <- sub(old_t2, new_t2, tex[idx_t2], fixed = TRUE)
+    cat(sprintf("  §3.6 type II MC SE bound updated: %.2f-%.2f pp\n",
+                100*min(t2_se_by_K), 100*max(t2_se_by_K)))
+  } else {
+    cat(sprintf("  §3.6 type II MC SE bound: %d matches, expected 1; skipping\n", length(idx_t2)))
+  }
+
+  writeLines(tex, TEX_PATH)
+  cat("  manuscript written to", TEX_PATH, "\n")
+}
+
+# ----------------------------------------------------------------------------
+# (2b) §3.3 and §4 full-grid timing placeholder replacement
+# ----------------------------------------------------------------------------
+
+cat("\n=== §3.3 / §4 full-grid timing placeholder replacement ===\n")
+fg_path <- file.path(OUTPUT_DIR, "ADRENAL_Benchmark_FullGridTiming.rda")
+if (!file.exists(fg_path)) {
+  cat("  MISSING ", fg_path, " - skipping timing update\n")
+} else {
+  e <- new.env(); load(fg_path, envir = e)
+  t_H0    <- e$timing$H0$elapsed
+  t_H1    <- e$timing$H1$elapsed
+  t_total <- t_H0 + t_H1
+  t_per   <- (t_H0 + t_H1) / 2
+
+  fmt_t <- function(x) {
+    if (x < 10)  formatC(x, digits = 1, format = "f")
+    else         formatC(x, digits = 0, format = "f")
+  }
+
+  tex <- readLines(TEX_PATH, warn = FALSE)
+  subs <- c(
+    "TBD_FG_H0"    = fmt_t(t_H0),
+    "TBD_FG_H1"    = fmt_t(t_H1),
+    "TBD_FG_TOTAL" = fmt_t(t_total),
+    "TBD_FG_PER"   = fmt_t(t_per)
+  )
+  for (key in names(subs)) {
+    # LaTeX source escapes underscores in \texttt{}, so the literal
+    # to match is e.g. `\texttt{TBD\_FG\_H0}`. Use fixed = TRUE so the
+    # backslashes and braces don't need regex-escaping.
+    key_tex <- gsub("_", "\\_", key, fixed = TRUE)
+    needle  <- paste0("\\texttt{", key_tex, "}")
+    hits    <- grep(needle, tex, fixed = TRUE)
+    if (length(hits) >= 1L) {
+      tex <- gsub(needle, subs[[key]], tex, fixed = TRUE)
+      cat(sprintf("  %s -> %s  (%d hit%s)\n",
+                  key, subs[[key]], length(hits),
+                  if (length(hits) == 1L) "" else "s"))
+    } else {
+      cat(sprintf("  %s: 0 hits (already filled?)\n", key))
+    }
+  }
+  writeLines(tex, TEX_PATH)
+  cat("  manuscript timing placeholders updated\n")
+}
+
+# ----------------------------------------------------------------------------
+# (2c) §3.5 calibrated Haybittle-Peto design placeholder replacement
+# ----------------------------------------------------------------------------
+
+cat("\n=== §3.5 calibrated HP design placeholder replacement ===\n")
+cd_path <- file.path(OUTPUT_DIR, "ADRENAL_CalibratedDesign.rda")
+if (!file.exists(cd_path)) {
+  cat("  MISSING ", cd_path, " - skipping calibrated-design update\n")
+} else {
+  e <- new.env(); load(cd_path, envir = e)
+  # Re-derive the manuscript-quoted designs from df_hp. The manuscript reports
+  # the single-criterion HP designs at p_interim = 0.998, p_final = 0.9775,
+  # q = 0.90 for K = 3 and K = 5.
+  hp <- e$df_hp
+  pick <- function(K_val) {
+    row <- hp[hp$K == K_val &
+              hp$schedule == "haybittle-peto" &
+              hp$criterion == "single" &
+              !is.na(hp$p_interim) & abs(hp$p_interim - 0.998) < 1e-9 &
+              !is.na(hp$p_final)   & abs(hp$p_final   - 0.9775) < 1e-9 &
+              !is.na(hp$q)         & abs(hp$q         - 0.90)   < 1e-9, ]
+    if (nrow(row) != 1L) NULL else row[1, ]
+  }
+  k3 <- pick(3)
+  k5 <- pick(5)
+  if (is.null(k3) || is.null(k5)) {
+    cat("  Manuscript-quoted HP designs not found in df_hp (",
+        if (is.null(k3)) "K=3" else "", " ",
+        if (is.null(k5)) "K=5" else "",
+        ") - skipping\n", sep = "")
+  } else {
+    fmt_pct1 <- function(x) formatC(100 * x, digits = 2, format = "f")
+    # In LaTeX math mode a bare comma is a list delimiter, so we wrap the
+    # thousands separator in braces (e.g. 3{,}471) consistent with usage
+    # elsewhere in the manuscript (3{,}800, etc.).
+    fmt_int1 <- function(x) format(round(x), big.mark = "{,}")
+
+    tex <- readLines(TEX_PATH, warn = FALSE)
+    subs <- c(
+      "TBD_K3_T1"  = fmt_pct1(k3$type1),
+      "TBD_K3_PWR" = fmt_pct1(k3$power),
+      "TBD_K3_EN0" = fmt_int1(k3$EN_H0),
+      "TBD_K3_EN1" = fmt_int1(k3$EN_H1),
+      "TBD_K5_T1"  = fmt_pct1(k5$type1),
+      "TBD_K5_PWR" = fmt_pct1(k5$power),
+      "TBD_K5_EN0" = fmt_int1(k5$EN_H0),
+      "TBD_K5_EN1" = fmt_int1(k5$EN_H1)
+    )
+    for (key in names(subs)) {
+      key_tex <- gsub("_", "\\_", key, fixed = TRUE)
+      needle  <- paste0("\\texttt{", key_tex, "}")
+      hits    <- grep(needle, tex, fixed = TRUE)
+      if (length(hits) >= 1L) {
+        tex <- gsub(needle, subs[[key]], tex, fixed = TRUE)
+        cat(sprintf("  %s -> %s  (%d hit%s)\n",
+                    key, subs[[key]], length(hits),
+                    if (length(hits) == 1L) "" else "s"))
+      } else {
+        cat(sprintf("  %s: 0 hits (already filled?)\n", key))
+      }
+    }
+    writeLines(tex, TEX_PATH)
+    cat("  manuscript HP calibrated-design placeholders updated\n")
+  }
+}
+
+# ----------------------------------------------------------------------------
+# (3) Summary of values needed for §3.3 / §3.4 / §3.5 prose edits
+# ----------------------------------------------------------------------------
+
+cat("\n=== Writing post_run_summary.txt ===\n")
+sink(SUMMARY_PATH, split = FALSE)
+on.exit(sink(NULL), add = TRUE)
+
+cat("Post-run summary written ", format(Sys.time()), "\n", sep = "")
+cat(strrep("=", 70), "\n\n")
+
+emit_benchmark <- function(rda_path, prior_label) {
+  if (!file.exists(rda_path)) {
+    cat(prior_label, ": cache missing at ", rda_path, "\n", sep = "")
+    return(invisible(NULL))
+  }
+  e <- new.env(); load(rda_path, envir = e)
+  bl <- e$bench_log
+  if (length(bl) == 0L) {
+    cat(prior_label, ": empty bench_log\n")
+    return(invisible(NULL))
+  }
+  cat(prior_label, " (", rda_path, ")\n", sep = "")
+  cat(strrep("-", 70), "\n")
+  hdr <- sprintf("%-7s %-6s %s",
+                 "tag", "method",
+                 "  eff_prob   exp_n   elapsed_s")
+  cat(hdr, "\n")
+  keys <- names(bl)[order(sapply(bl, function(r) r$design$K),
+                          sapply(bl, function(r) r$hypothesis))]
+  for (k in keys) {
+    r <- bl[[k]]
+    for (slot in c("batss", "adaptr_small", "proposed_small", "proposed_big")) {
+      cell <- r[[slot]]
+      if (!is.null(cell)) {
+        cat(sprintf("%-7s %-14s  %.4f   %5.0f   %8.1f\n",
+                    k, slot,
+                    cell$efficacy_prob, cell$expected_n, cell$elapsed))
+      }
+    }
+  }
+  cat("\n")
+
+  # Aggregate speedup ratios across all (K, hypothesis) cells
+  ratios_batss   <- numeric()
+  ratios_adaptr  <- numeric()
+  ratios_a_vs_b  <- numeric()
+  ratios_big_vs_batss <- numeric()
+  prop_big_times <- numeric()
+  prop_small_per_design <- numeric()
+  diff_t1_batss  <- numeric()
+  diff_t1_adaptr <- numeric()
+  diff_pwr_batss  <- numeric()
+  diff_pwr_adaptr <- numeric()
+  diff_EN_batss   <- numeric()
+  diff_EN_adaptr  <- numeric()
+
+  for (k in keys) {
+    r  <- bl[[k]]
+    pb <- r$proposed_big
+    ps <- r$proposed_small
+    bb <- r$batss
+    aa <- r$adaptr_small
+    if (!is.null(bb) && !is.null(ps) && !is.na(ps$elapsed) && ps$elapsed > 0) {
+      ratios_batss  <- c(ratios_batss,  bb$elapsed / ps$elapsed)
+    }
+    if (!is.null(aa) && !is.null(ps) && !is.na(ps$elapsed) && ps$elapsed > 0) {
+      ratios_adaptr <- c(ratios_adaptr, aa$elapsed / ps$elapsed)
+    }
+    if (!is.null(aa) && !is.null(bb) && !is.na(aa$elapsed) && aa$elapsed > 0) {
+      ratios_a_vs_b <- c(ratios_a_vs_b, bb$elapsed / aa$elapsed)
+    }
+    if (!is.null(bb) && !is.null(pb) && !is.na(pb$elapsed) && pb$elapsed > 0) {
+      ratios_big_vs_batss <- c(ratios_big_vs_batss, bb$elapsed / pb$elapsed)
+    }
+    if (!is.null(pb)) prop_big_times <- c(prop_big_times, pb$elapsed)
+    if (!is.null(pb) && !is.null(bb)) {
+      if (r$hypothesis == "H0") {
+        diff_t1_batss <- c(diff_t1_batss, abs(bb$efficacy_prob - pb$efficacy_prob))
+        diff_EN_batss <- c(diff_EN_batss, abs(bb$expected_n - pb$expected_n))
+      } else {
+        diff_pwr_batss <- c(diff_pwr_batss, abs(bb$efficacy_prob - pb$efficacy_prob))
+        diff_EN_batss  <- c(diff_EN_batss, abs(bb$expected_n - pb$expected_n))
+      }
+    }
+    if (!is.null(pb) && !is.null(aa)) {
+      if (r$hypothesis == "H0") {
+        diff_t1_adaptr <- c(diff_t1_adaptr, abs(aa$efficacy_prob - pb$efficacy_prob))
+        diff_EN_adaptr <- c(diff_EN_adaptr, abs(aa$expected_n - pb$expected_n))
+      } else {
+        diff_pwr_adaptr <- c(diff_pwr_adaptr, abs(aa$efficacy_prob - pb$efficacy_prob))
+        diff_EN_adaptr  <- c(diff_EN_adaptr, abs(aa$expected_n - pb$expected_n))
+      }
+    }
+  }
+  cat("Speedup BATSS / proposed @ R=5,000:        ",
+      sprintf("[%.0fx, %.0fx]\n", min(ratios_batss),  max(ratios_batss)))
+  cat("Speedup adaptr / proposed @ R=5,000:       ",
+      sprintf("[%.0fx, %.0fx]\n", min(ratios_adaptr), max(ratios_adaptr)))
+  cat("Ratio BATSS / adaptr @ R=5,000:            ",
+      sprintf("[%.0fx, %.0fx]\n", min(ratios_a_vs_b), max(ratios_a_vs_b)))
+  cat("Speedup BATSS @ R=5k / proposed @ R=1M:    ",
+      sprintf("[%.0fx, %.0fx]\n", min(ratios_big_vs_batss), max(ratios_big_vs_batss)))
+  cat("Proposed @ R=1,000,000 elapsed (seconds):  ",
+      sprintf("[%.1f, %.1f]\n", min(prop_big_times), max(prop_big_times)))
+  cat("Cross-method differences vs proposed @ R=1,000,000:\n")
+  cat("  type I error (pp): BATSS max=", sprintf("%.2f", 100*max(diff_t1_batss)),
+      "; adaptr max=", sprintf("%.2f", 100*max(diff_t1_adaptr)), "\n", sep = "")
+  cat("  power        (pp): BATSS max=", sprintf("%.2f", 100*max(diff_pwr_batss)),
+      "; adaptr max=", sprintf("%.2f", 100*max(diff_pwr_adaptr)), "\n", sep = "")
+  cat("  E[N]    (patients): BATSS max=", sprintf("%.0f", max(diff_EN_batss)),
+      "; adaptr max=", sprintf("%.0f", max(diff_EN_adaptr)), "\n", sep = "")
+  cat("\n")
+
+  # Type I climb under H0 from K=1 to K=9 for proposed @ R=1,000,000
+  cat("Type I climb (proposed @ R=1,000,000, H0):\n")
+  for (kk in c(1, 3, 5, 7, 9)) {
+    cell <- bl[[sprintf("K%d_H0", kk)]]
+    if (!is.null(cell$proposed_big)) {
+      cat(sprintf("  K=%d: alpha=%.4f\n", kk, cell$proposed_big$efficacy_prob))
+    }
+  }
+  cat("Expected sample size under H1 (proposed @ R=1,000,000):\n")
+  for (kk in c(1, 3, 5, 7, 9)) {
+    cell <- bl[[sprintf("K%d_H1", kk)]]
+    if (!is.null(cell$proposed_big)) {
+      cat(sprintf("  K=%d: E[N]=%.0f\n", kk, cell$proposed_big$expected_n))
+    }
+  }
+  cat("\n")
+}
+
+emit_benchmark(file.path(OUTPUT_DIR, "ADRENAL_Benchmark_UniformPrior.rda"),
+               "§3.3.1 conjugate Beta(1,1) prior")
+emit_benchmark(file.path(OUTPUT_DIR, "ADRENAL_Benchmark_LogitNormalPrior.rda"),
+               "§3.3.2 logit-normal non-conjugate prior")
+
+# §3.4 full-grid timing
+fg_path <- file.path(OUTPUT_DIR, "ADRENAL_Benchmark_FullGridTiming.rda")
+if (file.exists(fg_path)) {
+  cat("§3.4 full-grid timing (", fg_path, ")\n", sep = "")
+  cat(strrep("-", 70), "\n")
+  e <- new.env(); load(fg_path, envir = e)
+  cat(sprintf("  H0 elapsed: %.1f s\n", e$timing$H0$elapsed))
+  cat(sprintf("  H1 elapsed: %.1f s\n", e$timing$H1$elapsed))
+  cat(sprintf("  n_designs : %d (cores: %d, machine: %s)\n\n",
+              e$timing$n_designs, e$timing$n_cores, e$timing$machine))
+}
+
+# §3.6 MC SE summary at R=1,000,000
+mc_path <- file.path(OUTPUT_DIR, "ADRENAL_MonteCarloError.rda")
+if (file.exists(mc_path)) {
+  cat("§3.6 MC SE summary at R=1,000,000\n")
+  cat(strrep("-", 70), "\n")
+  e <- new.env(); load(mc_path, envir = e)
+  for (i in seq_along(e$numberOfAnalyses)) {
+    K <- e$numberOfAnalyses[i]
+    t1_se <- sd(e$type1ErrorRate[["1,000,000"]][i, ], na.rm = TRUE)
+    t2_se <- sd(e$type2ErrorRate[["1,000,000"]][i, ], na.rm = TRUE)
+    cat(sprintf("  K=%d: type I MC SE = %.4f pp; type II MC SE = %.4f pp\n",
+                K, 100 * t1_se, 100 * t2_se))
+  }
+  cat("\n")
+}
+
+cat("End of summary.\n")
+sink(NULL)
+cat("  wrote ", SUMMARY_PATH, "\n", sep = "")
+
+cat("\nDone. Post-run manuscript updates complete.\n")
+
+# Persist sessionInfo and package versions alongside the cache.
+bayesgsd_save_session("ADRENAL_Summary")
