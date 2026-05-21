@@ -278,20 +278,24 @@ build_12panel <- function(arr, ylab_text, ylim_range, hline_y = NULL) {
 # Phase 4: drive the plots for each (hypothesis, binding) configuration
 # ----------------------------------------------------------------------------
 
+# The early-stopping probability under the alternative and the null is
+# computed by sweep_grid() and stored in the swp_futON$earlyStop array for
+# downstream inspection, but the corresponding 12-panel figures are not
+# rendered. They are not referenced in the manuscript or in the supplement,
+# and they are byte-identical between the binding and non-binding
+# configurations (by the convention of Section 3.4 of the main paper). If
+# rendering is needed for ad-hoc inspection, add the corresponding entries
+# below.
 PLOT_DEFINITIONS <- list(
   H0 = list(
     list(stat = "errorRate",     ylab = "type I error rate",          ylim = c(0,    0.32), hline = 0.025,
          basename = "type1Error"),
-    list(stat = "earlyStop",     ylab = "early stopping probability", ylim = c(0,    0.70), hline = NULL,
-         basename = "earlyStoppingProbH0"),
     list(stat = "expSampleSize", ylab = "expected sample size",       ylim = c(2000, 3800), hline = 3800,
          basename = "expSampleSizeH0")
   ),
   H1 = list(
     list(stat = "errorRate",     ylab = "type II error rate",         ylim = c(0,    0.55), hline = 0.10,
          basename = "type2Error"),
-    list(stat = "earlyStop",     ylab = "early stopping probability", ylim = c(0,    1.00), hline = NULL,
-         basename = "earlyStoppingProbH1"),
     list(stat = "expSampleSize", ylab = "expected sample size",       ylim = c(900,  3800), hline = 3800,
          basename = "expSampleSizeH1")
   )

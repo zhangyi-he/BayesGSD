@@ -1,4 +1,4 @@
-#' @title Gauss-Legendre quadrature convergence study (Appendix B, D3b)
+#' @title Gauss-Legendre quadrature convergence study (Appendix A.2)
 #' @description Sweeps the number of Gauss-Legendre quadrature nodes Q over
 #'   {64, 128, 256, 512} for both the Beta(1,1) baseline and the
 #'   §3.3.2 logit-normal beta-mixture prior. For each Q the script:
@@ -20,8 +20,8 @@
 #'         adequate for the design-stage calibration.
 #'
 #'   The output (`ADRENAL_QuadratureConvergence.rda`) and the figure
-#'   (`ADRENAL_QuadratureConvergence.jpeg`) are intended for a new
-#'   Appendix B sub-subsection.
+#'   (`ADRENAL_QuadratureConvergence.jpeg`) support Appendix A.2 of the
+#'   main paper.
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.

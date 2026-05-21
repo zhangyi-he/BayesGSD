@@ -1,4 +1,4 @@
-#' @title Find calibrated Bayesian GSDs for the ADRENAL re-design (Section 3.4)
+#' @title Find calibrated Bayesian GSDs for the ADRENAL re-design (Section 3.5)
 #' @description Loads the cached OC-behaviour simulations (R = 1,000,000 trials,
 #'   union of look times for K = 2..10) and sweeps the precomputed posterior
 #'   probabilities over two complementary grids:
@@ -11,7 +11,7 @@
 #'         threshold takes a stringent value p_interim at each interim look
 #'         (k = 1, ..., K - 1) and a separate near-nominal value p_final at
 #'         the final analysis (k = K). This is the sweep described in
-#'         Section 3.4 that delivers the calibrated three- and five-look
+#'         Section 3.5 that delivers the calibrated three- and five-look
 #'         designs.
 #'
 #'   The script uses a fast in-memory path that pre-extracts the per-stage
@@ -24,8 +24,16 @@
 #'   p values quoted in Section 3.4, plus dual-criterion for the constant
 #'   sweep, and binding futility at q in {0.85, 0.90, 0.95, 1.00}. For each
 #'   sweep the script reports the configuration that meets alpha* = 2.5%
-#'   (one-sided) and 1 - beta* = 90% with the smallest expected sample size
-#'   under H_1 (and as a sanity check, the one minimising E[N | H_0]).
+#'   (one-sided, binding) and 1 - beta* = 90% with the smallest expected
+#'   sample size under H_1 (and as a sanity check, the one minimising
+#'   E[N | H_0]).
+#'
+#'   For each manuscript-quoted Haybittle-Peto design (Section 3.5), the
+#'   script additionally evaluates the type I error rate under the
+#'   non-binding convention of Section 3.2, by re-running fast_oc() with the
+#'   futility stop disabled (q -> 1.00 inside fast_oc, which short-circuits
+#'   to fut_hit = FALSE). The non-binding Type I is reported alongside the
+#'   binding Type I so the difference is explicit.
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
@@ -49,20 +57,35 @@ local({
 
 
 suppressPackageStartupMessages({
-  library(RBesT); library(zipfR); library(extraDistr); library(parallel)
+  library(RBesT); library(parallel)
 })
-options(BayesGSD.cores = 8L, mc.cores = 8L)
 source("./Code/Code v1.0/bayseqSim_bern.R")
 
 OUTPUT_DIR <- "./Output/Output v1.0"
 
-load(file.path(OUTPUT_DIR, "ADRENAL_OperatingCharacteristics_H0.rda"))
+# OC caches must exist before calibration. Fail fast with a clear message if
+# the user hasn't run ADRENAL_Evaluation_OperatingCharacteristics.R yet.
+oc_h0 <- file.path(OUTPUT_DIR, "ADRENAL_OperatingCharacteristics_H0.rda")
+oc_h1 <- file.path(OUTPUT_DIR, "ADRENAL_OperatingCharacteristics_H1.rda")
+missing <- c(if (!file.exists(oc_h0)) oc_h0,
+             if (!file.exists(oc_h1)) oc_h1)
+if (length(missing) > 0L) {
+  stop(sprintf(
+    "Required OC cache(s) missing:\n  %s\nRun ADRENAL_Evaluation_OperatingCharacteristics.R first.",
+    paste(missing, collapse = "\n  ")
+  ))
+}
+
+load(oc_h0)
 sim_H0 <- trialSimulation
 union_looks <- simulationSettings$numberOfSubjects
 N_MAX <- max(union_looks)
 
-load(file.path(OUTPUT_DIR, "ADRENAL_OperatingCharacteristics_H1.rda"))
+load(oc_h1)
 sim_H1 <- trialSimulation
+# Cross-validate that the H0 and H1 caches share the same look schedule;
+# otherwise downstream sweeps would be comparing mismatched designs.
+stopifnot(identical(union_looks, simulationSettings$numberOfSubjects))
 
 ALPHA_TARGET <- 0.025
 POWER_TARGET <- 0.90
@@ -233,9 +256,11 @@ cat(sprintf("  designs evaluated: %d  elapsed: %.1f s\n", nrow(df_const), elapse
 # Sweep 2: Haybittle-Peto-style stage-specific threshold (p_interim, p_final)
 # ============================================================================
 
-# Stringent interim threshold + near-nominal final threshold. Grids are chosen
-# so that the manuscript-quoted designs (p_interim = 0.998 and p_final =
-# 0.9775) are exactly on the mesh.
+# Stringent interim threshold + near-nominal final threshold. Grids are
+# chosen so that the manuscript-quoted designs at (p_interim, p_final) =
+# (0.995, 0.980) for K = 3 and (0.997, 0.980) for K = 5, both at q = 0.85,
+# and the script-historical alternatives at (0.998, 0.9775) at q = 0.90,
+# all lie on the mesh.
 P_INTERIM_GRID <- c(0.990, 0.995, 0.997, 0.998, 0.999)
 P_FINAL_GRID   <- c(0.950, 0.960, 0.970, 0.975, 0.9775, 0.980, 0.985,
                     0.990, 0.995, 0.998, 0.999)
@@ -301,18 +326,74 @@ best_const <- report_best(df_const, "Constant per-stage threshold")
 best_hp    <- report_best(df_hp,    "Haybittle-Peto stage-specific")
 
 # Also report the manuscript-quoted 3-look and 5-look HP designs explicitly,
-# so the reader can verify the numbers without re-deriving them.
-cat("\n=== Manuscript-quoted HP designs (single criterion, q = 0.90) ===\n")
-for (K in c(3, 5)) {
-  p_stage <- c(rep(0.998, K - 1), 0.9775)
-  oc <- evaluate_design_fast(K, p_stage, q = 0.90, crit = "single")
-  cat(sprintf("K = %d, p_{1:%d} = (%s), q = 0.90:\n",
-              K, K, paste(sprintf("%.4f", p_stage), collapse = ", ")))
-  cat(sprintf("  type I = %.4f, power = %.4f, E[N|H0] = %.0f, E[N|H1] = %.0f\n",
-              oc$type1, oc$power, oc$EN_H0, oc$EN_H1))
+# so the reader can verify the numbers without re-deriving them. For each
+# design, report both the binding type I error rate (the operating
+# characteristic used to calibrate the design against alpha* = 2.5%) and the
+# non-binding type I error rate (the regulator-facing rate computed without
+# enforcing the futility stop, per the convention of Section 3.2 of the main
+# paper).
+#
+# Two candidate threshold combinations are evaluated for each K, reflecting a
+# minor inconsistency between the manuscript text and an earlier version of
+# this script: the manuscript text at Section 3.5 reports
+#   K = 3: p_{1:3} = (0.995, 0.995, 0.980), q = 0.85
+#   K = 5: p_{1:5} = (0.997, 0.997, 0.997, 0.997, 0.980), q = 0.85
+# and an older version of this script reported the alternative
+#   K = 3: p_{1:3} = (0.998, 0.998, 0.9775), q = 0.90
+#   K = 5: p_{1:5} = (0.998, 0.998, 0.998, 0.998, 0.9775), q = 0.90.
+# Both sets are on the (P_INTERIM_GRID, P_FINAL_GRID) mesh and so are
+# directly comparable. The reader can verify which set the manuscript
+# numbers actually correspond to from the output below.
+nonbinding_type1 <- function(K, p_stage, crit = "single") {
+  # Non-binding type I: futility removed entirely. Use q = 1.00, which
+  # short-circuits fut_hit to FALSE inside fast_oc(); under H0 the
+  # cumulative-stop logic then reduces to "any efficacy hit across the K
+  # looks", matching the regulator's non-binding type I definition.
+  fast_oc(pp_H0[[as.character(K)]], p_stage, q = 1.00, crit = crit)$efficacy_rate
 }
 
-save(df_const, df_hp, best_const, best_hp,
+hp_designs <- list(
+  list(label = "manuscript (q = 0.85)", q = 0.85,
+       p_3 = c(0.995, 0.995, 0.980),
+       p_5 = c(0.997, 0.997, 0.997, 0.997, 0.980)),
+  list(label = "script-historical (q = 0.90)", q = 0.90,
+       p_3 = c(0.998, 0.998, 0.9775),
+       p_5 = c(0.998, 0.998, 0.998, 0.998, 0.9775))
+)
+
+hp_report <- vector("list", 0)
+cat("\n=== Manuscript-quoted HP designs (single criterion) ===\n")
+for (hp in hp_designs) {
+  cat(sprintf("\n-- %s --\n", hp$label))
+  for (K in c(3, 5)) {
+    p_stage  <- if (K == 3L) hp$p_3 else hp$p_5
+    oc       <- evaluate_design_fast(K, p_stage, q = hp$q, crit = "single")
+    type1_nb <- nonbinding_type1(K, p_stage)
+    cat(sprintf("K = %d, p_{1:%d} = (%s), q = %.2f:\n",
+                K, K, paste(sprintf("%.4f", p_stage), collapse = ", "), hp$q))
+    cat(sprintf("  Type I (binding,     q = %.2f) = %.4f\n",  hp$q,  oc$type1))
+    cat(sprintf("  Type I (non-binding, q -> 1.00) = %.4f\n", type1_nb))
+    cat(sprintf("  Power = %.4f, E[N|H0] = %.0f, E[N|H1] = %.0f\n",
+                oc$power, oc$EN_H0, oc$EN_H1))
+    hp_report[[length(hp_report) + 1L]] <- data.frame(
+      label        = hp$label,
+      K            = K,
+      q            = hp$q,
+      p_stage      = paste(sprintf("%.4f", p_stage), collapse = ","),
+      type1_bind   = oc$type1,
+      type1_nonbnd = type1_nb,
+      power        = oc$power,
+      EN_H0        = oc$EN_H0,
+      EN_H1        = oc$EN_H1,
+      stringsAsFactors = FALSE
+    )
+  }
+}
+df_hp_calibrated <- do.call(rbind, hp_report)
+cat("\n-- summary table --\n")
+print(df_hp_calibrated, row.names = FALSE)
+
+save(df_const, df_hp, best_const, best_hp, df_hp_calibrated,
      P_CONST_GRID, P_INTERIM_GRID, P_FINAL_GRID, Q_grid, K_grid, CRIT_LEVELS,
      ALPHA_TARGET, POWER_TARGET,
      elapsed_const, elapsed_hp,

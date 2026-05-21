@@ -1,5 +1,5 @@
 #' @title Monte Carlo precision of the operating-characteristic estimates for
-#'   the ADRENAL re-design (Section 3.5)
+#'   the ADRENAL re-design (Section 3.6)
 #' @description Estimates the sampling distribution of the type I and type II
 #'   error rate estimators for Bayesian GSDs with five design skeletons
 #'   K in {1, 3, 5, 7, 9} (equivalently 0, 2, 4, 6 and 8 equally spaced
@@ -11,7 +11,7 @@
 #'   those at any other R. The decision rule fixes a single-criterion
 #'   efficacy threshold p = 0.99 and a binding futility threshold q = 0.90,
 #'   with an independent Beta(1,1) prior on each arm. The cache underlies
-#'   the numerical summary table and the boxplot figure of Section 3.5.
+#'   the numerical summary table and the boxplot figure of Section 3.6.
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.

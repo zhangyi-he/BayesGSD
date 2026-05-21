@@ -50,41 +50,17 @@ reference_arm_tail <- function(threshold, e, m, alpha, beta, weight,
   sum(wpost * contrib)
 }
 
-# ---- Test 1: single-component Beta(1,1), Bernoulli, marginal arm tail ------
-# The proposed framework's posterior tail prob for one trial should match
-# the exact Beta-Binomial conjugate update.
+# NOTE: an earlier "Beta(1,1) single-arm tail" stub has been removed. The
+# single-component Beta(1,1) case is exercised end-to-end by Test 2 below
+# (Delta-tail convolution against direct 1-D integration); a single-arm-only
+# check adds no additional coverage and previously asserted nothing.
 
-cat("\n=== Test 1: Beta(1,1) single-arm tail ===\n")
-{
-  priors <- initialisePriorSettings()                  # default Beta(1,1)
-  # Use the framework via the two-arm kernel with one trivial arm.
-  # Threshold theta_t < x given binomial data (e=20, m=100):
-  #   exact: pbeta(x, 1+20, 1+80, lower.tail = TRUE)
-  e <- 20L; m <- 100L
-  for (x in c(0.10, 0.20, 0.30, 0.5, 0.8)) {
-    actual <- getPosteriorProbabilities(
-      treatmentEffects = list(size = -1 + 1e-12 + x, type = "absolute.risk"),
-      # build a "control" arm with degenerate data and a "treatment" arm with (e, m).
-      # We instead use the single-arm tail manually via lower.tail of pbeta.
-      numberOfEvents   = c(0L, e),
-      numberOfSubjects = c(1L, m),
-      alternative      = "less",
-      priors           = priors
-    )
-    # Reference: marginalise over theta_c ~ Beta(1, 2) (control degenerate).
-    # easier: use the analytic helper directly on the treatment arm,
-    # then convolve. Since this gets messy, skip the cross-validation here
-    # and validate the single-arm tail via direct convolution in Test 3 below.
-  }
-  cat("  (Test 1 deferred to Test 3 — full Beta(1,1) convolution check.)\n")
-}
-
-# ---- Test 2: 2-component mixture posterior weight renormalisation ----------
+# ---- Test 1: 2-component mixture posterior weight renormalisation ----------
 # Key bug fix: under a 2-component prior, the posterior weights are
 #   w_l_post ∝ w_l * B(a_l + e, b_l + m - e) / B(a_l, b_l).
 # We verify the framework's output matches this hand-computed reference.
 
-cat("\n=== Test 2: 2-component mixture renormalisation ===\n")
+cat("\n=== Test 1: 2-component mixture renormalisation ===\n")
 {
   # Mixture prior: 0.6 * Beta(5, 5) + 0.4 * Beta(20, 5)
   alpha  <- c(5, 20)
@@ -151,11 +127,11 @@ cat("\n=== Test 2: 2-component mixture renormalisation ===\n")
                msg = "2-component mixture posterior tail P(Delta < tau | data)")
 }
 
-# ---- Test 3: Beta(1,1) full convolution (Delta tail) -----------------------
+# ---- Test 2: Beta(1,1) full convolution (Delta tail) -----------------------
 # Sanity check: for the single-component default prior, the framework's tail
 # probability should match an independent 1-D integration of two betas.
 
-cat("\n=== Test 3: Beta(1,1) Delta tail convolution ===\n")
+cat("\n=== Test 2: Beta(1,1) Delta tail convolution ===\n")
 {
   priors <- initialisePriorSettings()
   ec <- 50L; mc <- 200L
@@ -185,11 +161,11 @@ cat("\n=== Test 3: Beta(1,1) Delta tail convolution ===\n")
                msg = "Beta(1,1) Delta tail probability matches direct integration")
 }
 
-# ---- Test 4: M8 — numeric-proximity threshold lookup, not rownames ---------
+# ---- Test 3: M8 — numeric-proximity threshold lookup, not rownames ---------
 # Build a posterior cache, then query thresholds whose `as.character`
 # representation differs from how they were stored (e.g. arithmetic drift).
 
-cat("\n=== Test 4: numeric-proximity threshold lookup ===\n")
+cat("\n=== Test 3: numeric-proximity threshold lookup ===\n")
 {
   # Single small simulation
   set.seed(42L)
@@ -233,8 +209,8 @@ cat("\n=== Test 4: numeric-proximity threshold lookup ===\n")
               abs(drifted_zero)))
 }
 
-# ---- Test 5: B3 — options(warn) restored after runTrialMonitoring ---------
-cat("\n=== Test 5: options(warn) restored on exit ===\n")
+# ---- Test 4: B3 — options(warn) restored after runTrialMonitoring ---------
+cat("\n=== Test 4: options(warn) restored on exit ===\n")
 {
   old_warn <- getOption("warn")
   options(warn = 1L)
@@ -259,8 +235,8 @@ cat("\n=== Test 5: options(warn) restored on exit ===\n")
   cat("  PASS: options(warn) restored to its prior value (1)\n")
 }
 
-# ---- Test 6: M2 — L'Ecuyer-CMRG installed ---------------------------------
-cat("\n=== Test 6: L'Ecuyer-CMRG RNG kind ===\n")
+# ---- Test 5: M2 — L'Ecuyer-CMRG installed ---------------------------------
+cat("\n=== Test 5: L'Ecuyer-CMRG RNG kind ===\n")
 {
   if (!identical(RNGkind()[1L], "L'Ecuyer-CMRG")) {
     stop(sprintf("FAIL: RNGkind()[1] = %s, expected L'Ecuyer-CMRG",
@@ -269,14 +245,14 @@ cat("\n=== Test 6: L'Ecuyer-CMRG RNG kind ===\n")
   cat("  PASS: RNG kind is L'Ecuyer-CMRG\n")
 }
 
-# ---- Test 7: elbow selection rule in initialisePriorSettings -------------
+# ---- Test 6: elbow selection rule in initialisePriorSettings -------------
 # §2.3 elbow rule: pick the smallest L at which the running-minimum empirical
 # cross-entropy stops improving by more than epsilon. Verify the selection
 # returns a parsimonious mixture (L <= numberOfComponents) on a logit-normal
 # prior sample, and that the same call with selection = "max" returns the
 # largest L.
 
-cat("\n=== Test 7: elbow selection rule ===\n")
+cat("\n=== Test 6: elbow selection rule ===\n")
 {
   set.seed(21L)
   logit <- function(p) log(p / (1 - p))

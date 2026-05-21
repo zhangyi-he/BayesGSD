@@ -29,9 +29,9 @@
 #   Stage  0 -- tests                                        ~ 30 s
 #   Stage  1 -- OC simulation (LONG)                         ~ tens of CPU-hours
 #   Stage  2 -- MC error study                               ~ minutes
-#   Stage  3 -- Appendix B prior approximation               ~ seconds
-#   Stage  4 -- Appendix C quadrature convergence            ~ minutes
-#   Stage  5 -- Section 3.4 calibration grid search          ~ minutes
+#   Stage  3 -- Appendix A.1 prior approximation             ~ seconds
+#   Stage  4 -- Appendix A.2 quadrature convergence          ~ minutes
+#   Stage  5 -- Section 3.5 calibration grid search          ~ minutes
 #   Stage  6 -- Section 3.3.1 benchmark vs BATSS+adaptr      ~ tens of CPU-hours
 #   Stage  7 -- Section 3.3.2 benchmark (logit-normal)       ~ tens of CPU-hours
 #   Stage  8 -- Section 3.4 / Section 4 full-grid timing     ~ seconds
@@ -95,16 +95,16 @@ run_stage "bayseqSim_bern_tests.R"                          "00_tests"
 #     Section 3.4 reference OC at R = 1,000,000 under H0 and H1.
 run_stage "ADRENAL_Evaluation_OperatingCharacteristics.R" "01_oc"
 
-# --- 2. Section 3.5 Monte Carlo error study --------------------------------
+# --- 2. Section 3.6 Monte Carlo error study --------------------------------
 run_stage "ADRENAL_Evaluation_MonteCarloError.R"          "02_mc"
 
-# --- 3. Appendix B prior approximation diagnostics -------------------------
+# --- 3. Appendix A.1 prior approximation diagnostics -----------------------
 run_stage "ADRENAL_Diagnostics_PriorApproximation.R"      "03_priordiag"
 
-# --- 4. Appendix C Gauss-Legendre quadrature convergence -------------------
+# --- 4. Appendix A.2 Gauss-Legendre quadrature convergence -----------------
 run_stage "ADRENAL_Diagnostics_QuadratureConvergence.R"   "04_quadconv"
 
-# --- 5. Section 3.4 calibration grid search --------------------------------
+# --- 5. Section 3.5 calibration grid search --------------------------------
 run_stage "ADRENAL_Calibration_GridSearch.R"              "05_calib"
 
 # --- 6. Section 3.3.1 benchmark vs BATSS + adaptr (LONG) -------------------
@@ -137,6 +137,8 @@ echo "    OK   $MS_DIR/ZH2023_Manuscript.pdf"
 
 (
   cd "$SUPP_DIR"
+  pdflatex -interaction=nonstopmode ZH2023_Supplemental_Material.tex >/dev/null
+  bibtex   ZH2023_Supplemental_Material                              >/dev/null
   pdflatex -interaction=nonstopmode ZH2023_Supplemental_Material.tex >/dev/null
   pdflatex -interaction=nonstopmode ZH2023_Supplemental_Material.tex >/dev/null
 )

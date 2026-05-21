@@ -46,7 +46,8 @@ SUMMARY_PATH      <- file.path(OUTPUT_DIR, "post_run_summary.txt")
 
 # Per-figure: (src basename, dst basename, dst directory). Binding figures and
 # the prior-diagnostic figure go to the main manuscript directory; non-binding
-# variants are renamed into the Supplemental Material directory under figS11..S14.
+# variants are renamed into the Supplemental Material directory under
+# figS41..S44 (Section S4 of the supplement, figures 1-4).
 fig_map <- list(
   list("ADRENAL_OperatingCharacteristics_type1Error_Binding.jpeg",      "fig341.jpeg",  MANUSCRIPT_DIR),
   list("ADRENAL_OperatingCharacteristics_type2Error_Binding.jpeg",      "fig342.jpeg",  MANUSCRIPT_DIR),
@@ -56,10 +57,10 @@ fig_map <- list(
   list("ADRENAL_PriorDiagnostics.jpeg",                                 "figA11.jpeg",   MANUSCRIPT_DIR),
   list("ADRENAL_QuadratureConvergence.jpeg",                            "figA12.jpeg",   MANUSCRIPT_DIR),
   # Supplement (non-binding versions of Figures 1-4 of §3.4)
-  list("ADRENAL_OperatingCharacteristics_type1Error_nonBinding.jpeg",      "figS11.jpeg", SUPPLEMENT_DIR),
-  list("ADRENAL_OperatingCharacteristics_type2Error_nonBinding.jpeg",      "figS12.jpeg", SUPPLEMENT_DIR),
-  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_nonBinding.jpeg", "figS13.jpeg", SUPPLEMENT_DIR),
-  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_nonBinding.jpeg", "figS14.jpeg", SUPPLEMENT_DIR)
+  list("ADRENAL_OperatingCharacteristics_type1Error_nonBinding.jpeg",      "figS41.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_type2Error_nonBinding.jpeg",      "figS42.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_nonBinding.jpeg", "figS43.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_nonBinding.jpeg", "figS44.jpeg", SUPPLEMENT_DIR)
 )
 cat("=== Figure copy/rename ===\n")
 for (entry in fig_map) {
@@ -223,16 +224,23 @@ if (!file.exists(cd_path)) {
 } else {
   e <- new.env(); load(cd_path, envir = e)
   # Re-derive the manuscript-quoted designs from df_hp. The manuscript reports
-  # the single-criterion HP designs at p_interim = 0.998, p_final = 0.9775,
-  # q = 0.90 for K = 3 and K = 5.
+  # the single-criterion HP designs at (p_interim, p_final, q) = (0.995,
+  # 0.980, 0.85) for K = 3 and (0.997, 0.980, 0.85) for K = 5. These match
+  # the labels used by df_hp_calibrated (rows tagged "manuscript (q = 0.85)").
   hp <- e$df_hp
+  hp_specs <- list(
+    `3` = list(p_interim = 0.995, p_final = 0.980, q = 0.85),
+    `5` = list(p_interim = 0.997, p_final = 0.980, q = 0.85)
+  )
   pick <- function(K_val) {
+    spec <- hp_specs[[as.character(K_val)]]
+    if (is.null(spec)) return(NULL)
     row <- hp[hp$K == K_val &
               hp$schedule == "haybittle-peto" &
               hp$criterion == "single" &
-              !is.na(hp$p_interim) & abs(hp$p_interim - 0.998) < 1e-9 &
-              !is.na(hp$p_final)   & abs(hp$p_final   - 0.9775) < 1e-9 &
-              !is.na(hp$q)         & abs(hp$q         - 0.90)   < 1e-9, ]
+              !is.na(hp$p_interim) & abs(hp$p_interim - spec$p_interim) < 1e-9 &
+              !is.na(hp$p_final)   & abs(hp$p_final   - spec$p_final)   < 1e-9 &
+              !is.na(hp$q)         & abs(hp$q         - spec$q)         < 1e-9, ]
     if (nrow(row) != 1L) NULL else row[1, ]
   }
   k3 <- pick(3)

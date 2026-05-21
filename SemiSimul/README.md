@@ -1,4 +1,4 @@
-# Rapid evaluation and calibration of Bayesian group sequential designs via conjugate-mixture semi-simulation
+# BayesGSD reproduction code
 
 R code that reproduces all numerical results, tables, and figures in the
 manuscript **"Rapid evaluation and calibration of Bayesian group sequential
@@ -97,22 +97,34 @@ outputs of earlier stages. The recommended order is:
    - One-time simulation pass at the union of look times for `K ∈ {2, …, 10}`,
      `R = 1,000,000` virtual trials, under both `H₀` and `H₁`. Writes
      `ADRENAL_OperatingCharacteristics_H0.rda` and `…_H1.rda`
-     (each ~ 450 MB), plus the `Binding` / `nonBinding` Figure 1–4 jpegs.
+     (each ~ 450 MB) plus eight 12-panel jpegs covering the four
+     operating-characteristic metrics (type I, type II, `E(N | H₀)`,
+     `E(N | H₁)`) under both `Binding` and `nonBinding` futility. The
+     `Binding` jpegs become Figures 1–4 of §3.4 of the main paper; the
+     `nonBinding` jpegs become Figures S1–S4 of the supplement. Only the
+     type-I-error panels differ numerically between the two binding states
+     (see the "Futility convention" bullet under "Notes on the kernel" below).
    - **This is the long-running step (~ tens of CPU-hours).** Everything
      downstream is fast (seconds to minutes) because it reuses these caches.
 2. `ADRENAL_Evaluation_MonteCarloError.R`
-   - Section 3.5 simulation-budget study, 100 replicates × R ∈ {1k, 10k, 100k, 1M}.
-   - Produces `ADRENAL_MonteCarloError.rda` and the boxplot Figure 5.
+   - §3.6 simulation-budget study, 100 replicates × R ∈ {1k, 10k, 100k, 1M}.
+   - Produces `ADRENAL_MonteCarloError.rda` and the boxplot Figure 5
+     (`fig361.jpeg` after Stage 10).
 3. `ADRENAL_Diagnostics_PriorApproximation.R`
-   - Appendix B prior-approximation diagnostics for the logit-normal example.
-   - Produces `ADRENAL_PriorDiagnostics.jpeg`.
+   - Appendix A.1 prior-approximation diagnostics for the logit-normal example.
+   - Produces `ADRENAL_PriorDiagnostics.{rda,jpeg}` (becomes Figure A.1).
 4. `ADRENAL_Diagnostics_QuadratureConvergence.R`
-   - Appendix C Gauss–Legendre quadrature convergence study at
+   - Appendix A.2 Gauss–Legendre quadrature convergence study at
      `Q ∈ {64, 128, 256, 512}` under both priors.
-   - Produces `ADRENAL_QuadratureConvergence.jpeg` and `_QuadratureConvergence.rda`.
+   - Produces `ADRENAL_QuadratureConvergence.{rda,jpeg}` (becomes Figure A.2).
 5. `ADRENAL_Calibration_GridSearch.R`
-   - Sweeps the calibrated Haybittle–Peto designs of §3.4 over the cached OC.
-   - Produces `ADRENAL_CalibratedDesign.rda`.
+   - Sweeps the calibrated Haybittle–Peto designs of §3.5 over the cached
+     OC. For each of the manuscript-quoted three- and five-look designs,
+     reports both the **binding** type I error rate (calibration target)
+     and the **non-binding** type I error rate (regulator-facing).
+   - Produces `ADRENAL_CalibratedDesign.rda` with `df_const`, `df_hp`,
+     `best_const`, `best_hp` (full sweep), and `df_hp_calibrated` (the
+     four reported designs with both Type I values side-by-side).
 6. `ADRENAL_Benchmark_UniformPrior.R` (§3.3.1)
    - Head-to-head against `BATSS` + `adaptr` under Beta(1,1). **This is the
      other long-running step (~ tens of CPU-hours) because of `BATSS`+INLA.**
@@ -121,13 +133,19 @@ outputs of earlier stages. The recommended order is:
    - Same benchmark under a logit-normal non-conjugate prior. Same scale of
      wall-clock cost as step 6.
 8. `ADRENAL_Benchmark_FullGridTiming.R`
-   - Sub-minute end-to-end timing of the 438-design grid sweep (§3.4 / §4).
+   - End-to-end timing of the 438-design grid sweep (~7 minutes on 8 CPU
+     cores, per §3.4 and §4).
 9. `ADRENAL_Benchmark_GenerateTables.R`
    - Splices the four benchmark tables (Tables 1–4) into the manuscript .tex.
 10. `ADRENAL_Summary.R`
-   - Copies/renames figures into the manuscript directory; fills the live
-     `TBD_*` placeholders; writes `post_run_summary.txt` with the numerical
-     deltas needed for the §3.3 / §3.4 prose.
+    - Copies/renames the OC jpegs into the manuscript and supplement
+      directories under their final names (`fig341.jpeg`–`fig344.jpeg`,
+      `fig361.jpeg`, `figA11.jpeg`, `figA12.jpeg`, `figS1.jpeg`–`figS4.jpeg`);
+      fills the live `TBD_*` placeholders in the .tex with cached numbers;
+      writes `post_run_summary.txt` with the numerical deltas referenced
+      throughout §3.3, §3.4, §3.5 and §3.6.
+11. Stage 11 of `ADRENAL_Replication.sh` rebuilds both the manuscript and
+    the supplement PDFs (`pdflatex` × 3 plus `bibtex` for each document).
 
 Each script writes a `<scriptname>_sessionInfo.rds` and `.txt` alongside its
 output, capturing the exact R / package versions used. Together with the
@@ -141,10 +159,10 @@ single seed (`SEED = 21L`) this is sufficient for byte-level reproduction.
 | `bayseqSim_bern_setup.R`                               | Shared setup (project root, parallelism, sessionInfo helper).      |
 | `bayseqSim_bern_tests.R`                             | Regression tests; run after any change to `bayseqSim_bern.R`.         |
 | `ADRENAL_Evaluation_OperatingCharacteristics.R`   | §3.4 OC simulation (long-running).                                 |
-| `ADRENAL_Evaluation_MonteCarloError.R`            | §3.5 MC error study.                                               |
-| `ADRENAL_Diagnostics_PriorApproximation.R`        | Appendix B prior approximation diagnostics.                        |
-| `ADRENAL_Diagnostics_QuadratureConvergence.R`     | Appendix C Gauss–Legendre quadrature convergence study.            |
-| `ADRENAL_Calibration_GridSearch.R`                | §3.4 calibrated three- and five-look designs.                      |
+| `ADRENAL_Evaluation_MonteCarloError.R`            | §3.6 MC error study.                                               |
+| `ADRENAL_Diagnostics_PriorApproximation.R`        | Appendix A.1 prior-approximation diagnostics.                      |
+| `ADRENAL_Diagnostics_QuadratureConvergence.R`     | Appendix A.2 Gauss–Legendre quadrature convergence study.          |
+| `ADRENAL_Calibration_GridSearch.R`                | §3.5 calibrated three- and five-look designs.                      |
 | `ADRENAL_Benchmark_UniformPrior.R`                | §3.3.1 head-to-head benchmark (long-running).                      |
 | `ADRENAL_Benchmark_LogitNormalPrior.R`            | §3.3.2 head-to-head benchmark (long-running).                      |
 | `ADRENAL_Benchmark_FullGridTiming.R`              | §3.4 / §4 full 438-design grid timing.                             |
@@ -159,8 +177,19 @@ single seed (`SEED = 21L`) this is sufficient for byte-level reproduction.
   `lbeta` / `lgamma`). The previous "legacy convention" of using prior
   weights directly is no longer applied. Single-component priors (the
   Beta(1,1) baseline) are unaffected.
+- **Futility convention.** The framework supports both binding and
+  non-binding futility, per §3.2 of the main paper. Under binding futility
+  all stopping decisions enforce the futility rule. Under non-binding
+  futility the type I error is computed *without* the futility stop (the
+  rule is advisory for the false-positive accounting); the expected sample
+  size, the early-stopping probability and the type II error are reported
+  from the futility-active sweep on the assumption that the data-monitoring
+  committee follows the rule in practice. As a consequence, only the
+  type-I-error panel of the §3.4 figures differs between binding and
+  non-binding (Figure 1 of the main paper vs Figure S1 of the supplement);
+  Figures S2–S4 are graphically identical to Figures 2–4.
 - **Gauss–Legendre quadrature.** Fixed 128 nodes on (0, 1). For sensitivity
-  see the convergence study in Appendix B.
+  see the convergence study in Appendix A.2.
 - **Parallel RNG.** The kernel installs `RNGkind("L'Ecuyer-CMRG")` at load
   time so that any future `mclapply`-based kernel that draws inside a chunk
   is reproducible.
@@ -168,4 +197,9 @@ single seed (`SEED = 21L`) this is sufficient for byte-level reproduction.
   kernel zeroes out quadrature nodes whose transformed value falls outside
   (0, 1). This is correct: those `(θ_c, θ_t)` pairs are outside the support
   of the joint posterior on the unit square, not "lost probability mass."
-
+- **Regression tests.** `bayseqSim_bern_tests.R` covers six checks: (1)
+  two-component mixture posterior weight renormalisation, (2) Beta(1,1)
+  delta-tail convolution against direct integration, (3) numeric-proximity
+  threshold lookup, (4) `options(warn)` restored on exit, (5) the
+  L'Ecuyer-CMRG RNG kind, and (6) the elbow rule for mixture-component
+  selection. All six should pass in under 30 seconds.

@@ -34,7 +34,7 @@ local({
 
 
 suppressPackageStartupMessages({
-  library(RBesT); library(zipfR); library(extraDistr); library(parallel)
+  library(RBesT); library(parallel)
   library(ggplot2); library(ggsci); library(patchwork)
 })
 source("./Code/Code v1.0/bayseqSim_bern.R")
