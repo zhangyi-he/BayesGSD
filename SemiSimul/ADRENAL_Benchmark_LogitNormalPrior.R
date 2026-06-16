@@ -40,22 +40,17 @@
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
-# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+# See Code/Code v1.0/adabay_bern_setup.R for behaviour and override env vars.
+# Defer project-root resolution and setup sourcing to the shared bootstrap.
 local({
-  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    cur <- getwd()
-    while (cur != dirname(cur)) {
-      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
-        bootstrap_root <- cur; break
-      }
-      cur <- dirname(cur)
-    }
+  root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  cur  <- if (nzchar(root) && dir.exists(root)) root else getwd()
+  while (!file.exists(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))) {
+    if (cur == dirname(cur))
+      stop("Could not locate adabay_bern_bootstrap.R; set BAYESGSD_ROOT.")
+    cur <- dirname(cur)
   }
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
-  }
-  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+  source(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))
 })
 
 
@@ -71,7 +66,7 @@ suppressPackageStartupMessages({
 INLA::inla.setOption(num.threads = "1:1")
 cat("INLA num.threads pinned to:", INLA::inla.getOption("num.threads"), "\n")
 
-source("./Code/Code v1.0/bayseqSim_bern.R")
+source("./Code/Code v1.0/adabay_bern.R")
 
 OUTPUT_DIR <- "./Output/Output v1.0"
 RDA_PATH   <- file.path(OUTPUT_DIR, "ADRENAL_Benchmark_LogitNormalPrior.rda")
@@ -164,8 +159,10 @@ P_FUT_BATSS  <- 1 - Q_FUT_MS   # BATSS futility on P(treatment best | data) < b
 P_FUT_LOW    <- 1 - Q_FUT_MS   # proposed futility on lower-tail posterior
 P_INF_LOW    <- 1 - Q_FUT_MS   # adaptr inferiority on P(arm best | data) < b
 
-R_BENCH    <- 5000L
-R_PROP_BIG <- 1000000L
+R_BENCH    <- 5000L      # matched budget across all three methods
+R_PROP_BIG <- 1000000L   # high-precision budget for the proposed framework
+R_ADAPTR_BIG <- 1000000L # high-precision budget for adaptr (it is fast enough
+                         # to reach 10^6; BATSS is not -- see the manuscript note)
 
 make_looks <- function(K) {
   as.integer(ceiling(seq(from = 0, to = N_MAX, length.out = K + 1L))[-1])
@@ -219,7 +216,7 @@ run_proposed <- function(design, hypothesis, R, seed) {
   )
   t_sim <- (proc.time() - t0)[["elapsed"]]
 
-  # Manuscript Eq. 3.2.3: futility evaluated only at interim looks
+  # Manuscript decision criteria (Section 2.1): futility evaluated only at interim looks
   # (k = 1, ..., K - 1); deactivate the final-stage row.
   fut_thr <- matrix(P_FUT_LOW, nrow = design$K, ncol = 1)
   fut_thr[design$K, 1L] <- 0
@@ -339,6 +336,21 @@ save_cache <- function() {
   save(bench_log, priorSettings, BATSS_PRIOR_FIXED, file = RDA_PATH)
 }
 
+# A slot is considered "cached" only if it exists AND was computed at the
+# target R. If R differs (e.g., user bumped R_BENCH from 5,000 to 10,000),
+# the slot is invalidated and re-run.
+.cached_at_R <- function(slot, R_target) {
+  !is.null(slot) && identical(as.integer(slot$R), as.integer(R_target))
+}
+
+# ----------------------------------------------------------------------------
+# Warm-up (timing hygiene). Absorb the proposed framework's one-time
+# initialisation (Rcpp JIT compilation and the first mclapply worker fork) with
+# a small throwaway run, so it is not charged to the first timed cell. The
+# result is discarded; the deterministic per-cell seeds are unaffected. See the
+# companion note in ADRENAL_Benchmark_UniformPrior.R.
+invisible(run_proposed(DESIGNS[[1]], "H0", R = 200L, seed = SEED))
+
 for (design in DESIGNS) {
   for (hypothesis in c("H0", "H1")) {
     tag <- sprintf("%s_%s", design$name, hypothesis)
@@ -347,7 +359,7 @@ for (design in DESIGNS) {
     cur <- bench_log[[tag]]
     if (is.null(cur)) cur <- list(design = design, hypothesis = hypothesis)
 
-    if (is.null(cur$proposed_small)) {
+    if (!.cached_at_R(cur$proposed_small, R_BENCH)) {
       cat(sprintf("  proposed @ R=%d  ... ", R_BENCH))
       cur$proposed_small <- run_proposed(design, hypothesis, R = R_BENCH, seed = SEED)
       cat(sprintf("%.1f s; eff=%.4f; E[N]=%.0f\n",
@@ -360,7 +372,7 @@ for (design in DESIGNS) {
       cat(sprintf("  proposed @ R=%d  ... cached\n", R_BENCH))
     }
 
-    if (is.null(cur$proposed_big)) {
+    if (!.cached_at_R(cur$proposed_big, R_PROP_BIG)) {
       cat(sprintf("  proposed @ R=%d ... ", R_PROP_BIG))
       cur$proposed_big <- run_proposed(design, hypothesis, R = R_PROP_BIG, seed = SEED)
       cat(sprintf("%.1f s; eff=%.4f; E[N]=%.0f\n",
@@ -373,7 +385,7 @@ for (design in DESIGNS) {
       cat(sprintf("  proposed @ R=%d ... cached\n", R_PROP_BIG))
     }
 
-    if (is.null(cur$batss)) {
+    if (!.cached_at_R(cur$batss, R_BENCH)) {
       cat(sprintf("  BATSS    @ R=%d (INLA pinned 1:1) ... ", R_BENCH))
       cur$batss <- tryCatch(run_batss(design, hypothesis, R = R_BENCH),
                             error = function(e) {
@@ -394,7 +406,7 @@ for (design in DESIGNS) {
       cat(sprintf("  BATSS    @ R=%d ... cached\n", R_BENCH))
     }
 
-    if (is.null(cur$adaptr_small)) {
+    if (!.cached_at_R(cur$adaptr_small, R_BENCH)) {
       cat(sprintf("  adaptr   @ R=%d (seed=%d) ... ", R_BENCH, SEED))
       cur$adaptr_small <- run_adaptr(design, hypothesis, R = R_BENCH, seed = SEED)
       cat(sprintf("%.1f s; eff=%.4f; E[N]=%.0f\n",
@@ -405,6 +417,23 @@ for (design in DESIGNS) {
       save_cache()
     } else {
       cat(sprintf("  adaptr   @ R=%d ... cached\n", R_BENCH))
+    }
+
+    # High-precision adaptr at R = 10^6 (the same budget as proposed_big).
+    # adaptr's near-exact inverse-CDF logit-normal posterior is light enough to
+    # reach this budget; BATSS is not (see manuscript note). Cached
+    # incrementally so a long run resumes from the last completed cell.
+    if (!.cached_at_R(cur$adaptr_big, R_ADAPTR_BIG)) {
+      cat(sprintf("  adaptr   @ R=%d (seed=%d) ... ", R_ADAPTR_BIG, SEED))
+      cur$adaptr_big <- run_adaptr(design, hypothesis, R = R_ADAPTR_BIG, seed = SEED)
+      cat(sprintf("%.1f s; eff=%.4f; E[N]=%.0f\n",
+                  cur$adaptr_big$elapsed,
+                  cur$adaptr_big$efficacy_prob,
+                  cur$adaptr_big$expected_n))
+      bench_log[[tag]] <- cur
+      save_cache()
+    } else {
+      cat(sprintf("  adaptr   @ R=%d ... cached\n", R_ADAPTR_BIG))
     }
   }
 }

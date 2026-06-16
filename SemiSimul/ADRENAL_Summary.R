@@ -2,8 +2,8 @@
 #' @description Runs after the full re-run completes. Performs the
 #'   deterministic manuscript updates that can be done from the new caches:
 #'     (1) copies/renames the new figure files into the manuscript directory
-#'         under the fig341..fig344 / fig361 / figA11 / figA12 filenames the
-#'         .tex file references;
+#'         (fig341 / fig361 / figA11 / figA21) and the supplement directory
+#'         (figS41..figS45) under the filenames the .tex files reference;
 #'     (2) replaces the \texttt{TBD} placeholders in the Monte Carlo
 #'         precision table (§3.6) and its discussion paragraphs with
 #'         mean / MC SE values computed from the new
@@ -17,22 +17,17 @@
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
-# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+# See Code/Code v1.0/adabay_bern_setup.R for behaviour and override env vars.
+# Defer project-root resolution and setup sourcing to the shared bootstrap.
 local({
-  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    cur <- getwd()
-    while (cur != dirname(cur)) {
-      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
-        bootstrap_root <- cur; break
-      }
-      cur <- dirname(cur)
-    }
+  root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  cur  <- if (nzchar(root) && dir.exists(root)) root else getwd()
+  while (!file.exists(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))) {
+    if (cur == dirname(cur))
+      stop("Could not locate adabay_bern_bootstrap.R; set BAYESGSD_ROOT.")
+    cur <- dirname(cur)
   }
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
-  }
-  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+  source(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))
 })
 
 # Note: OUTPUT_DIR, MANUSCRIPT_DIR, SUPPLEMENT_DIR are provided by the setup
@@ -41,26 +36,137 @@ TEX_PATH          <- file.path(MANUSCRIPT_DIR, "ZH2023_Manuscript.tex")
 SUMMARY_PATH      <- file.path(OUTPUT_DIR, "post_run_summary.txt")
 
 # ----------------------------------------------------------------------------
+# Idempotent / safe in-place .tex editing helpers
+# ----------------------------------------------------------------------------
+# The manuscript .tex is a tracked source file; this script mutates it in place
+# to fill \texttt{TBD...} placeholders. To make re-runs safe and idempotent we
+# (a) take a one-time backup before the first mutation of a run, and (b) for
+# each substitution distinguish three outcomes rather than silently no-op:
+#   FILLED  - the placeholder was found and replaced;
+#   ALREADY - the placeholder is gone but the intended value is already present
+#             (a previous run filled it; re-running is a no-op success);
+#   MISS    - neither the placeholder nor the intended value is present, which
+#             signals a path/typo/regression and is reported loudly.
+# .tex_miss accumulates genuine misses so the run can fail at the end if any
+# expected placeholder could neither be filled nor confirmed already filled.
+#
+# Idempotency discriminator: the TBD tokens are unique strings only this script
+# emits, so an absent placeholder means a prior run already filled it (ALREADY,
+# a no-op success). A genuine error -- a wrong TEX_PATH or an unreadable file --
+# is caught once up front by tex_read_checked(), which fails loudly if the file
+# is missing/empty or does not look like the manuscript. With that guard in
+# place an absent placeholder is unambiguously "already filled", not a typo.
+.tex_miss <- character(0)
+
+tex_backup_once <- function(path) {
+  bak <- paste0(path, ".bak")
+  if (file.exists(path) && !file.exists(bak)) {
+    file.copy(path, bak, overwrite = FALSE)
+    cat(sprintf("  backup written: %s\n", bak))
+  }
+  invisible(bak)
+}
+
+# Read TEX_PATH with an up-front sanity check so a wrong path or an empty/garbled
+# file fails loudly rather than masquerading as "everything already filled".
+tex_read_checked <- function(path) {
+  if (!file.exists(path))
+    stop("Manuscript .tex not found at: ", path,
+         " (check MANUSCRIPT_DIR / TEX_PATH).")
+  tx <- readLines(path, warn = FALSE)
+  if (length(tx) < 50L)
+    stop("Manuscript .tex at ", path, " has only ", length(tx),
+         " lines; expected the full manuscript. Refusing to edit.")
+  if (!any(grepl("\\begin{document}", tx, fixed = TRUE)))
+    stop("File at ", path, " does not look like the manuscript ",
+         "(no \\begin{document}); refusing to edit.")
+  tx
+}
+
+# Substitute a set of \texttt{<key>} placeholders. `subs` is a named character
+# vector key -> replacement value. Underscores in keys are escaped to match the
+# LaTeX source (\texttt{TBD\_FG\_H0}). Idempotent: an absent placeholder is a
+# no-op success (ALREADY) given the up-front tex_read_checked() guard.
+apply_texttt_subs <- function(tex, subs) {
+  for (key in names(subs)) {
+    val     <- subs[[key]]
+    key_tex <- gsub("_", "\\_", key, fixed = TRUE)
+    needle  <- paste0("\\texttt{", key_tex, "}")
+    hits    <- grep(needle, tex, fixed = TRUE)
+    if (length(hits) >= 1L) {
+      tex <- gsub(needle, val, tex, fixed = TRUE)
+      cat(sprintf("  FILLED  %s -> %s  (%d hit%s)\n",
+                  key, val, length(hits), if (length(hits) == 1L) "" else "s"))
+    } else {
+      cat(sprintf("  ALREADY %s (placeholder absent; prior run filled it; no-op)\n", key))
+    }
+  }
+  tex
+}
+
+# Replace a single fully-specified TBD line with its filled counterpart.
+# Idempotent: an already-filled line counts as success; an unexpected match
+# count or a line that is neither placeholder nor filled is a loud miss.
+apply_line_sub <- function(tex, old_line, new_line, label, context) {
+  idx_old <- which(tex == old_line)
+  if (length(idx_old) == 1L) {
+    tex[idx_old] <- new_line
+    cat(sprintf("  FILLED  %s\n", label))
+  } else if (length(idx_old) > 1L) {
+    cat(sprintf("  MISS    %s: %d placeholder matches, expected 1; skipping\n",
+                label, length(idx_old)))
+    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
+  } else if (any(tex == new_line)) {
+    cat(sprintf("  ALREADY %s (line already filled; no-op)\n", label))
+  } else {
+    cat(sprintf("  MISS    %s: neither placeholder nor filled line found\n", label))
+    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
+  }
+  tex
+}
+
+# Replace one prose sentence (fixed-string `old`) with `new`. Idempotent and
+# loud on genuine misses (the prose anchors are unique to this script).
+apply_prose_sub <- function(tex, old, new, label, context) {
+  idx <- grep(old, tex, fixed = TRUE)
+  if (length(idx) == 1L) {
+    tex[idx] <- sub(old, new, tex[idx], fixed = TRUE)
+    cat(sprintf("  FILLED  %s\n", label))
+  } else if (length(idx) > 1L) {
+    cat(sprintf("  MISS    %s: %d matches, expected 1; skipping\n", label, length(idx)))
+    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
+  } else if (any(grepl(new, tex, fixed = TRUE))) {
+    cat(sprintf("  ALREADY %s (sentence already filled; no-op)\n", label))
+  } else {
+    cat(sprintf("  MISS    %s: neither placeholder nor filled sentence found\n", label))
+    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
+  }
+  tex
+}
+
+# ----------------------------------------------------------------------------
 # (1) Figure copy/rename
 # ----------------------------------------------------------------------------
 
-# Per-figure: (src basename, dst basename, dst directory). Binding figures and
-# the prior-diagnostic figure go to the main manuscript directory; non-binding
-# variants are renamed into the Supplemental Material directory under
-# figS41..S44 (Section S4 of the supplement, figures 1-4).
+# Per-figure: (src basename, dst basename, dst directory). The same-cache demo,
+# Monte Carlo and appendix figures go to the main manuscript directory; the
+# design-grid operating characteristics go to the Supplemental Material
+# directory under figS41..figS45 (Section S4 of the supplement, Figures S1-S5).
 fig_map <- list(
-  list("ADRENAL_OperatingCharacteristics_type1Error_Binding.jpeg",      "fig341.jpeg",  MANUSCRIPT_DIR),
-  list("ADRENAL_OperatingCharacteristics_type2Error_Binding.jpeg",      "fig342.jpeg",  MANUSCRIPT_DIR),
-  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_Binding.jpeg", "fig343.jpeg",  MANUSCRIPT_DIR),
-  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_Binding.jpeg", "fig344.jpeg",  MANUSCRIPT_DIR),
+  # Design-grid operating characteristics now live in Supplement Section S4
+  # (the binding type I is Figure S1 there); the binding type II / E(N) panels
+  # are graphically identical to the non-binding figS43..figS45 and are not copied.
+  list("ADRENAL_OperatingCharacteristics_type1Error_Binding.jpeg",      "figS41.jpeg",  SUPPLEMENT_DIR),
+  list("ADRENAL_Demo_SameCacheSweep.jpeg",                              "fig341.jpeg",  MANUSCRIPT_DIR),
+  list("ADRENAL_Calibration_FeasibleFamily.jpeg",                       "fig351.jpeg",  MANUSCRIPT_DIR),
   list("ADRENAL_MonteCarloError.jpeg",                                  "fig361.jpeg",  MANUSCRIPT_DIR),
   list("ADRENAL_PriorDiagnostics.jpeg",                                 "figA11.jpeg",   MANUSCRIPT_DIR),
-  list("ADRENAL_QuadratureConvergence.jpeg",                            "figA12.jpeg",   MANUSCRIPT_DIR),
-  # Supplement (non-binding versions of Figures 1-4 of §3.4)
-  list("ADRENAL_OperatingCharacteristics_type1Error_nonBinding.jpeg",      "figS41.jpeg", SUPPLEMENT_DIR),
-  list("ADRENAL_OperatingCharacteristics_type2Error_nonBinding.jpeg",      "figS42.jpeg", SUPPLEMENT_DIR),
-  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_nonBinding.jpeg", "figS43.jpeg", SUPPLEMENT_DIR),
-  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_nonBinding.jpeg", "figS44.jpeg", SUPPLEMENT_DIR)
+  list("ADRENAL_QuadratureConvergence.jpeg",                            "figA21.jpeg",   MANUSCRIPT_DIR),
+  # Supplement Section S4 (design-grid operating characteristics, Figures S2-S5)
+  list("ADRENAL_OperatingCharacteristics_type1Error_nonBinding.jpeg",      "figS42.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_type2Error_nonBinding.jpeg",      "figS43.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH0_nonBinding.jpeg", "figS44.jpeg", SUPPLEMENT_DIR),
+  list("ADRENAL_OperatingCharacteristics_expSampleSizeH1_nonBinding.jpeg", "figS45.jpeg", SUPPLEMENT_DIR)
 )
 cat("=== Figure copy/rename ===\n")
 for (entry in fig_map) {
@@ -96,7 +202,8 @@ if (!file.exists(mc_path)) {
   fmt_pct <- function(x) sprintf("%.2f\\,\\%%", 100 * x)
   fmt_pp  <- function(x) sprintf("%.2f\\,pp", 100 * x)
 
-  tex <- readLines(TEX_PATH, warn = FALSE)
+  tex_backup_once(TEX_PATH)
+  tex <- tex_read_checked(TEX_PATH)
   R_label_to_replace <- "1,000,000"
 
   for (i in seq_along(K_GRID)) {
@@ -118,14 +225,8 @@ if (!file.exists(mc_path)) {
       fmt_pct(t1_mean), fmt_pp(t1_se),
       fmt_pct(t2_mean), fmt_pp(t2_se)
     )
-    idx <- which(tex == old_line)
-    if (length(idx) == 1L) {
-      tex[idx] <- new_line
-      cat(sprintf("  K=%d row updated  (alpha=%.4f+-%.4f, beta=%.4f+-%.4f)\n",
-                  K, t1_mean, t1_se, t2_mean, t2_se))
-    } else {
-      cat(sprintf("  K=%d: %d matches found, expected 1; skipping\n", K, length(idx)))
-    }
+    tex <- apply_line_sub(tex, old_line, new_line,
+                          sprintf("MC table K=%d row", K), "§3.6 table")
   }
 
   # §3.6 discussion paragraph 1: replace "$0.06$ percentage points (at $K=9$)" type
@@ -138,13 +239,7 @@ if (!file.exists(mc_path)) {
   old_t1 <- "and at $R=1{,}000{,}000$ it is \\texttt{TBD} percentage points (\\texttt{TBD})."
   new_t1 <- sprintf("and at $R=1{,}000{,}000$ it is $%.2f$ percentage points (at $K=%d$).",
                     100 * max_t1_se, argmax_K)
-  idx_t1 <- grep(old_t1, tex, fixed = TRUE)
-  if (length(idx_t1) == 1L) {
-    tex[idx_t1] <- sub(old_t1, new_t1, tex[idx_t1], fixed = TRUE)
-    cat(sprintf("  §3.6 type I MC SE bound updated: %.2f pp at K=%d\n", 100*max_t1_se, argmax_K))
-  } else {
-    cat(sprintf("  §3.6 type I MC SE bound: %d matches, expected 1; skipping\n", length(idx_t1)))
-  }
+  tex <- apply_prose_sub(tex, old_t1, new_t1, "§3.6 type I MC SE bound", "§3.6 prose")
 
   # §3.6 discussion paragraph 2: replace "between TBD and TBD percentage points
   # at R=1,000,000" with the actual range.
@@ -153,14 +248,7 @@ if (!file.exists(mc_path)) {
   old_t2 <- "further to between \\texttt{TBD} and \\texttt{TBD} percentage points at $R=1{,}000{,}000$."
   new_t2 <- sprintf("further to between $%.2f$ and $%.2f$ percentage points at $R=1{,}000{,}000$.",
                     100 * min(t2_se_by_K), 100 * max(t2_se_by_K))
-  idx_t2 <- grep(old_t2, tex, fixed = TRUE)
-  if (length(idx_t2) == 1L) {
-    tex[idx_t2] <- sub(old_t2, new_t2, tex[idx_t2], fixed = TRUE)
-    cat(sprintf("  §3.6 type II MC SE bound updated: %.2f-%.2f pp\n",
-                100*min(t2_se_by_K), 100*max(t2_se_by_K)))
-  } else {
-    cat(sprintf("  §3.6 type II MC SE bound: %d matches, expected 1; skipping\n", length(idx_t2)))
-  }
+  tex <- apply_prose_sub(tex, old_t2, new_t2, "§3.6 type II MC SE bound", "§3.6 prose")
 
   writeLines(tex, TEX_PATH)
   cat("  manuscript written to", TEX_PATH, "\n")
@@ -186,29 +274,17 @@ if (!file.exists(fg_path)) {
     else         formatC(x, digits = 0, format = "f")
   }
 
-  tex <- readLines(TEX_PATH, warn = FALSE)
+  tex_backup_once(TEX_PATH)
+  tex <- tex_read_checked(TEX_PATH)
+  # LaTeX source escapes underscores in \texttt{}, so the literal to match is
+  # e.g. `\texttt{TBD\_FG\_H0}`; apply_texttt_subs() handles the escaping.
   subs <- c(
     "TBD_FG_H0"    = fmt_t(t_H0),
     "TBD_FG_H1"    = fmt_t(t_H1),
     "TBD_FG_TOTAL" = fmt_t(t_total),
     "TBD_FG_PER"   = fmt_t(t_per)
   )
-  for (key in names(subs)) {
-    # LaTeX source escapes underscores in \texttt{}, so the literal
-    # to match is e.g. `\texttt{TBD\_FG\_H0}`. Use fixed = TRUE so the
-    # backslashes and braces don't need regex-escaping.
-    key_tex <- gsub("_", "\\_", key, fixed = TRUE)
-    needle  <- paste0("\\texttt{", key_tex, "}")
-    hits    <- grep(needle, tex, fixed = TRUE)
-    if (length(hits) >= 1L) {
-      tex <- gsub(needle, subs[[key]], tex, fixed = TRUE)
-      cat(sprintf("  %s -> %s  (%d hit%s)\n",
-                  key, subs[[key]], length(hits),
-                  if (length(hits) == 1L) "" else "s"))
-    } else {
-      cat(sprintf("  %s: 0 hits (already filled?)\n", key))
-    }
-  }
+  tex <- apply_texttt_subs(tex, subs)
   writeLines(tex, TEX_PATH)
   cat("  manuscript timing placeholders updated\n")
 }
@@ -223,14 +299,19 @@ if (!file.exists(cd_path)) {
   cat("  MISSING ", cd_path, " - skipping calibrated-design update\n")
 } else {
   e <- new.env(); load(cd_path, envir = e)
-  # Re-derive the manuscript-quoted designs from df_hp. The manuscript reports
-  # the single-criterion HP designs at (p_interim, p_final, q) = (0.995,
-  # 0.980, 0.85) for K = 3 and (0.997, 0.980, 0.85) for K = 5. These match
-  # the labels used by df_hp_calibrated (rows tagged "manuscript (q = 0.85)").
+  # Re-derive the headline designs from df_hp. The manuscript reports the
+  # maximum-power single-criterion HP designs, defined once in
+  # adabay_bern_setup.R (BAYESGSD_DESIGNS) -- the single source of truth for the
+  # Section 3.5 calibrated designs: interim 0.999, final 0.977, q = 0.90 for both
+  # K = 3 and K = 5.
   hp <- e$df_hp
   hp_specs <- list(
-    `3` = list(p_interim = 0.995, p_final = 0.980, q = 0.85),
-    `5` = list(p_interim = 0.997, p_final = 0.980, q = 0.85)
+    `3` = list(p_interim = BAYESGSD_DESIGNS$interim_eff,
+               p_final   = BAYESGSD_DESIGNS$final_by_K[["3"]],
+               q         = BAYESGSD_DESIGNS$q_futility),
+    `5` = list(p_interim = BAYESGSD_DESIGNS$interim_eff,
+               p_final   = BAYESGSD_DESIGNS$final_by_K[["5"]],
+               q         = BAYESGSD_DESIGNS$q_futility)
   )
   pick <- function(K_val) {
     spec <- hp_specs[[as.character(K_val)]]
@@ -257,7 +338,8 @@ if (!file.exists(cd_path)) {
     # elsewhere in the manuscript (3{,}800, etc.).
     fmt_int1 <- function(x) format(round(x), big.mark = "{,}")
 
-    tex <- readLines(TEX_PATH, warn = FALSE)
+    tex_backup_once(TEX_PATH)
+    tex <- tex_read_checked(TEX_PATH)
     subs <- c(
       "TBD_K3_T1"  = fmt_pct1(k3$type1),
       "TBD_K3_PWR" = fmt_pct1(k3$power),
@@ -268,19 +350,7 @@ if (!file.exists(cd_path)) {
       "TBD_K5_EN0" = fmt_int1(k5$EN_H0),
       "TBD_K5_EN1" = fmt_int1(k5$EN_H1)
     )
-    for (key in names(subs)) {
-      key_tex <- gsub("_", "\\_", key, fixed = TRUE)
-      needle  <- paste0("\\texttt{", key_tex, "}")
-      hits    <- grep(needle, tex, fixed = TRUE)
-      if (length(hits) >= 1L) {
-        tex <- gsub(needle, subs[[key]], tex, fixed = TRUE)
-        cat(sprintf("  %s -> %s  (%d hit%s)\n",
-                    key, subs[[key]], length(hits),
-                    if (length(hits) == 1L) "" else "s"))
-      } else {
-        cat(sprintf("  %s: 0 hits (already filled?)\n", key))
-      }
-    }
+    tex <- apply_texttt_subs(tex, subs)
     writeLines(tex, TEX_PATH)
     cat("  manuscript HP calibrated-design placeholders updated\n")
   }
@@ -456,6 +526,15 @@ sink(NULL)
 cat("  wrote ", SUMMARY_PATH, "\n", sep = "")
 
 cat("\nDone. Post-run manuscript updates complete.\n")
+
+# Fail loudly if any expected manuscript substitution could neither be filled
+# nor confirmed already-filled: that signals a regression (renamed placeholder,
+# changed prose anchor, or wrong path), not a benign re-run.
+if (length(.tex_miss) > 0L) {
+  stop("Manuscript substitution(s) failed (neither placeholder nor filled ",
+       "value found): ", paste(.tex_miss, collapse = ", "),
+       ". Check that the .tex placeholders/anchors match this script.")
+}
 
 # Persist sessionInfo and package versions alongside the cache.
 bayesgsd_save_session("ADRENAL_Summary")

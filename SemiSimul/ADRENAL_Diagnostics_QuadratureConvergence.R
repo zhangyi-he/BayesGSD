@@ -25,22 +25,17 @@
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
-# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+# See Code/Code v1.0/adabay_bern_setup.R for behaviour and override env vars.
+# Defer project-root resolution and setup sourcing to the shared bootstrap.
 local({
-  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    cur <- getwd()
-    while (cur != dirname(cur)) {
-      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
-        bootstrap_root <- cur; break
-      }
-      cur <- dirname(cur)
-    }
+  root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  cur  <- if (nzchar(root) && dir.exists(root)) root else getwd()
+  while (!file.exists(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))) {
+    if (cur == dirname(cur))
+      stop("Could not locate adabay_bern_bootstrap.R; set BAYESGSD_ROOT.")
+    cur <- dirname(cur)
   }
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
-  }
-  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+  source(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))
 })
 
 suppressPackageStartupMessages({
@@ -59,8 +54,10 @@ suppressPackageStartupMessages({
 
 source_kernel_with_Q <- function(Q) {
   options(BayesGSD.quadrature.n = as.integer(Q))
-  # Force a clean reload so .init_bayseqSim() rebuilds nodes/weights.
-  source(file.path(CODE_DIR, "bayseqSim_bern.R"))
+  # Force a clean reload so .init_adabay() rebuilds nodes/weights.
+  # Use the same explicit relative path every other ADRENAL_* driver uses,
+  # rather than relying on CODE_DIR surviving the local({...}) bootstrap.
+  source("./Code/Code v1.0/adabay_bern.R")
 }
 
 # Source the kernel once at the script's default Q so the public API
@@ -102,9 +99,9 @@ print(prior_logitnormal[[2]])
 # --------------------------------------------------------------------------
 
 # Mimic the §3.4 looks for K=9 (most stringent test of fixed-Q quadrature
-# because the posterior is sharpest at the final stage).
-N_MAX     <- 3800L
-LOOKS_K9  <- as.integer(ceiling(seq(0, N_MAX, length.out = 10L))[-1])  # 422, 845, ..., 3800
+# because the posterior is sharpest at the final stage). N_MAX and make_looks()
+# are the single source of truth in adabay_bern_setup.R (sourced via bootstrap).
+LOOKS_K9  <- make_looks(9L)  # 423, 845, ..., 3800
 # Per-arm look sizes under 1:1 allocation.
 NPC_K9    <- LOOKS_K9 - round(LOOKS_K9 / 2)
 NPT_K9    <- round(LOOKS_K9 / 2)
@@ -193,14 +190,11 @@ DELTA_ALT     <- -0.05
 SEED          <- 21L
 K_QC          <- c(3L, 5L, 9L)
 
-mk_looks <- function(K) {
-  # Equally-spaced looks at information fractions j/K for j = 1, ..., K,
-  # matching the §3.3 protocol described in the manuscript.
-  as.integer(ceiling(seq(0, N_MAX, length.out = K + 1L))[-1])
-}
+# Equally-spaced looks at information fractions j/K for j = 1, ..., K, matching
+# the §3.3 protocol; make_looks() is the single source of truth (setup helper).
 
 run_oc_one <- function(prior, K, hypothesis, R, seed) {
-  looks <- mk_looks(K)
+  looks <- make_looks(K)
   rates <- if (hypothesis == "H0") c(P_CONTROL, P_CONTROL)
            else c(P_CONTROL, P_CONTROL + DELTA_ALT)
   sim <- runTrialMonitoring(

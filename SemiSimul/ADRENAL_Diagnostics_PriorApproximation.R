@@ -13,22 +13,17 @@
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
-# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+# See Code/Code v1.0/adabay_bern_setup.R for behaviour and override env vars.
+# Defer project-root resolution and setup sourcing to the shared bootstrap.
 local({
-  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    cur <- getwd()
-    while (cur != dirname(cur)) {
-      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
-        bootstrap_root <- cur; break
-      }
-      cur <- dirname(cur)
-    }
+  root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  cur  <- if (nzchar(root) && dir.exists(root)) root else getwd()
+  while (!file.exists(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))) {
+    if (cur == dirname(cur))
+      stop("Could not locate adabay_bern_bootstrap.R; set BAYESGSD_ROOT.")
+    cur <- dirname(cur)
   }
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
-  }
-  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+  source(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))
 })
 
 
@@ -37,7 +32,7 @@ suppressPackageStartupMessages({
   library(RBesT); library(parallel)
   library(ggplot2); library(ggsci); library(patchwork)
 })
-source("./Code/Code v1.0/bayseqSim_bern.R")
+source("./Code/Code v1.0/adabay_bern.R")
 
 OUTPUT_DIR <- "./Output/Output v1.0"
 RDA_PATH   <- file.path(OUTPUT_DIR, "ADRENAL_PriorDiagnostics.rda")

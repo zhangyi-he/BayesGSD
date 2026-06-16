@@ -15,22 +15,17 @@
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
-# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+# See Code/Code v1.0/adabay_bern_setup.R for behaviour and override env vars.
+# Defer project-root resolution and setup sourcing to the shared bootstrap.
 local({
-  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    cur <- getwd()
-    while (cur != dirname(cur)) {
-      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
-        bootstrap_root <- cur; break
-      }
-      cur <- dirname(cur)
-    }
+  root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  cur  <- if (nzchar(root) && dir.exists(root)) root else getwd()
+  while (!file.exists(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))) {
+    if (cur == dirname(cur))
+      stop("Could not locate adabay_bern_bootstrap.R; set BAYESGSD_ROOT.")
+    cur <- dirname(cur)
   }
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
-  }
-  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+  source(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))
 })
 
 
@@ -43,7 +38,7 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
-source("./Code/Code v1.0/bayseqSim_bern.R")
+source("./Code/Code v1.0/adabay_bern.R")
 
 OUTPUT_DIR <- "./Output/Output v1.0"
 RDA_PATH   <- file.path(OUTPUT_DIR, "ADRENAL_MonteCarloError.rda")
@@ -117,7 +112,7 @@ run_one_replicate <- function(design, hypothesis, R, seed) {
     alternative = "less"
   )
   priorSettings <- initialisePriorSettings()
-  # Manuscript Eq. 3.2.3: futility evaluated only at interim looks
+  # Manuscript decision criteria (Section 2.1): futility evaluated only at interim looks
   # (k = 1, ..., K - 1); deactivate the final-stage row. Final-stage
   # outcomes are recorded as "no efficacy" rather than "futility", but
   # for the type I / type II error rate reported here the result is
@@ -165,15 +160,25 @@ init_matrix_list <- function() {
 }
 
 if (file.exists(RDA_PATH)) {
-  load(RDA_PATH)
-  if (!is.list(type1ErrorRate) ||
-      !identical(names(type1ErrorRate), R_LABELS) ||
-      !identical(dim(type1ErrorRate[[1]]), c(length(K_GRID), N_REPS))) {
+  # Load into an isolated env so the cache cannot silently clobber R_GRID,
+  # R_LABELS, SEED_OFFSET or any other settings defined above in this script.
+  cache_env <- new.env(parent = emptyenv())
+  load(RDA_PATH, envir = cache_env)
+  if (!exists("type1ErrorRate", envir = cache_env, inherits = FALSE) ||
+      !is.list(cache_env$type1ErrorRate) ||
+      !identical(names(cache_env$type1ErrorRate), R_LABELS) ||
+      !identical(dim(cache_env$type1ErrorRate[[1]]),
+                 c(length(K_GRID), N_REPS))) {
     stop("Cache at ", RDA_PATH, " is not in the direct-simulation format ",
          "(expected lists indexed by R = ", paste(R_LABELS, collapse = ", "),
          " with ", length(K_GRID), " x ", N_REPS, " matrices). ",
          "Delete it before running this script.")
   }
+  type1ErrorRate     <- cache_env$type1ErrorRate
+  type2ErrorRate     <- cache_env$type2ErrorRate
+  numberOfAnalyses   <- cache_env$numberOfAnalyses
+  numberOfReplicates <- cache_env$numberOfReplicates
+  rm(cache_env)
   cat(sprintf("\nResuming from %s with %d filled cells (max %d).\n",
               RDA_PATH,
               sum(!is.na(unlist(type1ErrorRate)) & !is.na(unlist(type2ErrorRate))),
@@ -235,7 +240,7 @@ save_cache()
 cat(sprintf("\nSaved %s.\n", RDA_PATH))
 
 # ----------------------------------------------------------------------------
-# Boxplot figure (Figure 3.5.1)
+# Boxplot figure (Figure 3 / fig361.jpeg, Section 3.6)
 # ----------------------------------------------------------------------------
 
 K_LABELS <- as.character(K_GRID)

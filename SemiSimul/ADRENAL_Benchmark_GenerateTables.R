@@ -4,27 +4,22 @@
 #'   markers inside ZH2023_Manuscript.tex. Four tables are produced per
 #'   prior, one for the type I error rate (H0 cells) and one for the power
 #'   (H1 cells). Each table contains, per K, one row each for BATSS at
-#'   R = 5,000, adaptr at R = 5,000, Proposed at R = 5,000 and Proposed at
-#'   R = 1,000,000.
+#'   R = 5,000, adaptr at R = 5,000 and R = 1,000,000, and Proposed at
+#'   R = 5,000 and R = 1,000,000.
 #' @author Zhangyi He, Feng Yu, Suzie Cro, Laurent Billot
 
 # Project root, parallelism, INLA threads, sessionInfo helper.
-# See Code/Code v1.0/bayseqSim_bern_setup.R for behaviour and override env vars.
+# See Code/Code v1.0/adabay_bern_setup.R for behaviour and override env vars.
+# Defer project-root resolution and setup sourcing to the shared bootstrap.
 local({
-  bootstrap_root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    cur <- getwd()
-    while (cur != dirname(cur)) {
-      if (dir.exists(file.path(cur, "Code")) && dir.exists(file.path(cur, "Article"))) {
-        bootstrap_root <- cur; break
-      }
-      cur <- dirname(cur)
-    }
+  root <- Sys.getenv("BAYESGSD_ROOT", unset = "")
+  cur  <- if (nzchar(root) && dir.exists(root)) root else getwd()
+  while (!file.exists(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))) {
+    if (cur == dirname(cur))
+      stop("Could not locate adabay_bern_bootstrap.R; set BAYESGSD_ROOT.")
+    cur <- dirname(cur)
   }
-  if (!nzchar(bootstrap_root) || !dir.exists(bootstrap_root)) {
-    stop("Could not resolve BAYESGSD_ROOT. Set it before running.")
-  }
-  source(file.path(bootstrap_root, "Code", "Code v1.0", "bayseqSim_bern_setup.R"))
+  source(file.path(cur, "Code", "Code v1.0", "adabay_bern_bootstrap.R"))
 })
 
 
@@ -60,6 +55,7 @@ fmt_sec <- function(x) {
 METHOD_ORDER <- list(
   list(slot = "batss",          label = "\\texttt{BATSS}", R_label = "$5{,}000$"),
   list(slot = "adaptr_small",   label = "\\texttt{adaptr}", R_label = "$5{,}000$"),
+  list(slot = "adaptr_big",     label = "\\texttt{adaptr}", R_label = "$1{,}000{,}000$"),
   list(slot = "proposed_small", label = "Proposed",         R_label = "$5{,}000$"),
   list(slot = "proposed_big",   label = "Proposed",         R_label = "$1{,}000{,}000$")
 )
