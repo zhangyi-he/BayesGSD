@@ -163,7 +163,9 @@ outputs of earlier stages. The dependency order is:
       directories under their final names (manuscript: `fig341.jpeg`,
       `fig351.jpeg`, `fig361.jpeg`, `figA11.jpeg`, `figA21.jpeg`; supplement Section S4:
       `figS41.jpeg`–`figS45.jpeg`);
-      fills the live `TBD_*` placeholders in the .tex with cached numbers;
+      reconciles its cached numbers with the manuscript markers it owns (the
+      §3.3/§4 full-grid timing and the §3.5 calibrated-design values), which are
+      no-ops on the already-filled committed manuscript;
       writes `post_run_summary.txt` with the numerical deltas referenced
       throughout §3.3, §3.4, §3.5 and §3.6.
 11. Stage 11 of `ADRENAL_Replication.sh` rebuilds both the manuscript and

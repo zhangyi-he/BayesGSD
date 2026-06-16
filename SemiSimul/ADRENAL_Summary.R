@@ -41,14 +41,10 @@ SUMMARY_PATH      <- file.path(OUTPUT_DIR, "post_run_summary.txt")
 # The manuscript .tex is a tracked source file; this script mutates it in place
 # to fill \texttt{TBD...} placeholders. To make re-runs safe and idempotent we
 # (a) take a one-time backup before the first mutation of a run, and (b) for
-# each substitution distinguish three outcomes rather than silently no-op:
+# each substitution distinguish two outcomes rather than silently no-op:
 #   FILLED  - the placeholder was found and replaced;
 #   ALREADY - the placeholder is gone but the intended value is already present
-#             (a previous run filled it; re-running is a no-op success);
-#   MISS    - neither the placeholder nor the intended value is present, which
-#             signals a path/typo/regression and is reported loudly.
-# .tex_miss accumulates genuine misses so the run can fail at the end if any
-# expected placeholder could neither be filled nor confirmed already filled.
+#             (a previous run filled it; re-running is a no-op success).
 #
 # Idempotency discriminator: the TBD tokens are unique strings only this script
 # emits, so an absent placeholder means a prior run already filled it (ALREADY,
@@ -56,7 +52,6 @@ SUMMARY_PATH      <- file.path(OUTPUT_DIR, "post_run_summary.txt")
 # is caught once up front by tex_read_checked(), which fails loudly if the file
 # is missing/empty or does not look like the manuscript. With that guard in
 # place an absent placeholder is unambiguously "already filled", not a typo.
-.tex_miss <- character(0)
 
 tex_backup_once <- function(path) {
   bak <- paste0(path, ".bak")
@@ -104,45 +99,6 @@ apply_texttt_subs <- function(tex, subs) {
   tex
 }
 
-# Replace a single fully-specified TBD line with its filled counterpart.
-# Idempotent: an already-filled line counts as success; an unexpected match
-# count or a line that is neither placeholder nor filled is a loud miss.
-apply_line_sub <- function(tex, old_line, new_line, label, context) {
-  idx_old <- which(tex == old_line)
-  if (length(idx_old) == 1L) {
-    tex[idx_old] <- new_line
-    cat(sprintf("  FILLED  %s\n", label))
-  } else if (length(idx_old) > 1L) {
-    cat(sprintf("  MISS    %s: %d placeholder matches, expected 1; skipping\n",
-                label, length(idx_old)))
-    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
-  } else if (any(tex == new_line)) {
-    cat(sprintf("  ALREADY %s (line already filled; no-op)\n", label))
-  } else {
-    cat(sprintf("  MISS    %s: neither placeholder nor filled line found\n", label))
-    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
-  }
-  tex
-}
-
-# Replace one prose sentence (fixed-string `old`) with `new`. Idempotent and
-# loud on genuine misses (the prose anchors are unique to this script).
-apply_prose_sub <- function(tex, old, new, label, context) {
-  idx <- grep(old, tex, fixed = TRUE)
-  if (length(idx) == 1L) {
-    tex[idx] <- sub(old, new, tex[idx], fixed = TRUE)
-    cat(sprintf("  FILLED  %s\n", label))
-  } else if (length(idx) > 1L) {
-    cat(sprintf("  MISS    %s: %d matches, expected 1; skipping\n", label, length(idx)))
-    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
-  } else if (any(grepl(new, tex, fixed = TRUE))) {
-    cat(sprintf("  ALREADY %s (sentence already filled; no-op)\n", label))
-  } else {
-    cat(sprintf("  MISS    %s: neither placeholder nor filled sentence found\n", label))
-    .tex_miss <<- c(.tex_miss, sprintf("%s/%s", context, label))
-  }
-  tex
-}
 
 # ----------------------------------------------------------------------------
 # (1) Figure copy/rename
@@ -186,73 +142,13 @@ for (entry in fig_map) {
 }
 
 # ----------------------------------------------------------------------------
-# (2) Monte Carlo precision table (§3.6) placeholder replacement + discussion TBDs
+# (2) [removed] Section 3.6 Monte Carlo precision: no manuscript splice.
+#     The Monte Carlo precision table now lives in the Supplemental Material
+#     (Table S4, hand-coded) and the Section 3.6 manuscript prose is filled
+#     directly in 10^{6} notation, so there is nothing to splice into the main
+#     text here. (The previous block targeted R=1,000,000 / TBD markers that no
+#     longer exist in the manuscript, which would abort this stage.)
 # ----------------------------------------------------------------------------
-
-cat("\n=== Monte Carlo precision table placeholder replacement ===\n")
-mc_path <- file.path(OUTPUT_DIR, "ADRENAL_MonteCarloError.rda")
-if (!file.exists(mc_path)) {
-  cat("  MISSING ", mc_path, " - skipping table update\n")
-} else {
-  load(mc_path)
-  # numberOfAnalyses, R_GRID, R_LABELS, type1ErrorRate, type2ErrorRate
-
-  K_GRID <- numberOfAnalyses
-
-  fmt_pct <- function(x) sprintf("%.2f\\,\\%%", 100 * x)
-  fmt_pp  <- function(x) sprintf("%.2f\\,pp", 100 * x)
-
-  tex_backup_once(TEX_PATH)
-  tex <- tex_read_checked(TEX_PATH)
-  R_label_to_replace <- "1,000,000"
-
-  for (i in seq_along(K_GRID)) {
-    K <- K_GRID[i]
-    rates_t1 <- type1ErrorRate[[R_label_to_replace]][i, ]
-    rates_t2 <- type2ErrorRate[[R_label_to_replace]][i, ]
-    t1_mean <- mean(rates_t1, na.rm = TRUE)
-    t1_se   <- sd(rates_t1, na.rm = TRUE)
-    t2_mean <- mean(rates_t2, na.rm = TRUE)
-    t2_se   <- sd(rates_t2, na.rm = TRUE)
-
-    old_line <- sprintf(
-      "    %d & 1{,}000{,}000 & \\texttt{TBD} & \\texttt{TBD} & \\texttt{TBD} & \\texttt{TBD} \\\\",
-      K
-    )
-    new_line <- sprintf(
-      "    %d & 1{,}000{,}000 & %s & %s & %s & %s \\\\",
-      K,
-      fmt_pct(t1_mean), fmt_pp(t1_se),
-      fmt_pct(t2_mean), fmt_pp(t2_se)
-    )
-    tex <- apply_line_sub(tex, old_line, new_line,
-                          sprintf("MC table K=%d row", K), "§3.6 table")
-  }
-
-  # §3.6 discussion paragraph 1: replace "$0.06$ percentage points (at $K=9$)" type
-  # statement and its R=1,000,000 extension. Find the largest type I MC SE at
-  # R=1,000,000 across K and which K it falls at.
-  t1_se_by_K <- sapply(seq_along(K_GRID), function(i) sd(type1ErrorRate[["1,000,000"]][i, ], na.rm = TRUE))
-  argmax_K   <- K_GRID[which.max(t1_se_by_K)]
-  max_t1_se  <- max(t1_se_by_K)
-
-  old_t1 <- "and at $R=1{,}000{,}000$ it is \\texttt{TBD} percentage points (\\texttt{TBD})."
-  new_t1 <- sprintf("and at $R=1{,}000{,}000$ it is $%.2f$ percentage points (at $K=%d$).",
-                    100 * max_t1_se, argmax_K)
-  tex <- apply_prose_sub(tex, old_t1, new_t1, "§3.6 type I MC SE bound", "§3.6 prose")
-
-  # §3.6 discussion paragraph 2: replace "between TBD and TBD percentage points
-  # at R=1,000,000" with the actual range.
-  t2_se_by_K <- sapply(seq_along(K_GRID), function(i) sd(type2ErrorRate[["1,000,000"]][i, ], na.rm = TRUE))
-
-  old_t2 <- "further to between \\texttt{TBD} and \\texttt{TBD} percentage points at $R=1{,}000{,}000$."
-  new_t2 <- sprintf("further to between $%.2f$ and $%.2f$ percentage points at $R=1{,}000{,}000$.",
-                    100 * min(t2_se_by_K), 100 * max(t2_se_by_K))
-  tex <- apply_prose_sub(tex, old_t2, new_t2, "§3.6 type II MC SE bound", "§3.6 prose")
-
-  writeLines(tex, TEX_PATH)
-  cat("  manuscript written to", TEX_PATH, "\n")
-}
 
 # ----------------------------------------------------------------------------
 # (2b) §3.3 and §4 full-grid timing placeholder replacement
@@ -526,15 +422,6 @@ sink(NULL)
 cat("  wrote ", SUMMARY_PATH, "\n", sep = "")
 
 cat("\nDone. Post-run manuscript updates complete.\n")
-
-# Fail loudly if any expected manuscript substitution could neither be filled
-# nor confirmed already-filled: that signals a regression (renamed placeholder,
-# changed prose anchor, or wrong path), not a benign re-run.
-if (length(.tex_miss) > 0L) {
-  stop("Manuscript substitution(s) failed (neither placeholder nor filled ",
-       "value found): ", paste(.tex_miss, collapse = ", "),
-       ". Check that the .tex placeholders/anchors match this script.")
-}
 
 # Persist sessionInfo and package versions alongside the cache.
 bayesgsd_save_session("ADRENAL_Summary")
