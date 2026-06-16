@@ -1,4 +1,4 @@
-# BayesGSD reproduction code
+# BayesGSD: rapid evaluation and calibration of Bayesian group sequential designs
 
 R code that reproduces all numerical results, tables, and figures in the
 manuscript **"Rapid evaluation and calibration of Bayesian group sequential
